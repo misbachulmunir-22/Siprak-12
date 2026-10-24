@@ -1,5 +1,6 @@
 ﻿import React from 'react';
 import {
+  Platform,
   View,
   Text,
   StyleSheet,
@@ -246,6 +247,7 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#F8FAFC',
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
   },
   navBar: {
     height: 52,
