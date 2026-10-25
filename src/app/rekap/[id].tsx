@@ -206,8 +206,8 @@ export default function DetailRekapScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
+      <StatusBar barStyle="dark-content" />
+
       {/* Top Bar Navigasi */}
       <View style={styles.navBar}>
         <TouchableOpacity

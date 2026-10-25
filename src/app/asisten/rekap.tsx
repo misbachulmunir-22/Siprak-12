@@ -98,8 +98,7 @@ export default function RekapTabScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
-      <View style={styles.container}>
+        <StatusBar barStyle="dark-content" />      <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.pageTitle}>Rekapitulasi Kehadiran</Text>
           <Text style={styles.pageSubtitle}>
