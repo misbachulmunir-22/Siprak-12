@@ -1,9 +1,10 @@
-import React from 'react';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+
 import { SiprakProvider } from '@/context/SiprakContext';
 import { colors } from '@/theme';
+import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import React from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 export default function RootLayout() {
   return (
@@ -14,9 +15,11 @@ export default function RootLayout() {
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: colors.background },
-          }}>
+          }}
+        >
           <Stack.Screen name="index" />
           <Stack.Screen name="asisten" />
+          <Stack.Screen name="asisten/rekap" />
           <Stack.Screen name="praktikan" />
           <Stack.Screen
             name="sesi/[id]"
