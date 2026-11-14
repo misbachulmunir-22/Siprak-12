@@ -336,3 +336,4 @@ function formatTimestamp(val: unknown): string | undefined {
   }
   return undefined;
 }
+
