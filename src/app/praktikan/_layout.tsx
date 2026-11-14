@@ -1,27 +1,18 @@
 import React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { Redirect, Tabs } from 'expo-router';
 import { useSiprakContext } from '@/context/SiprakContext';
 import { colors } from '@/theme';
-import { Redirect, Tabs } from 'expo-router';
 
 export default function PraktikanLayout() {
-  const { currentUser, authStatus } = useSiprakContext();
+  const { currentUser } = useSiprakContext();
 
-  if (authStatus === 'initializing') {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}>
-        <ActivityIndicator color={colors.primary} size="large" />
-      </View>
-    );
-  }
-  if (authStatus === 'profile-pending' || authStatus === 'profile-error') {
-    return <Redirect href="/account-pending" />;
-  }
-  if (authStatus !== 'authenticated' || !currentUser) {
+  // Route guard: hanya pengguna yang sudah login dengan peran praktikan yang diizinkan
+  if (!currentUser) {
     return <Redirect href="/" />;
   }
+
   if (currentUser.peran !== 'praktikan') {
-    return <Redirect href="/asisten" />;
+    return <Redirect href="/" />;
   }
 
   return (
@@ -33,11 +24,39 @@ export default function PraktikanLayout() {
         headerTitleStyle: { color: colors.text, fontWeight: '700' },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.muted,
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        tabBarStyle: {
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
+        },
       }}>
-      <Tabs.Screen name="index" options={{ title: 'Jadwal', headerShown: false }} />
-      <Tabs.Screen name="riwayat" options={{ title: 'Riwayat', headerTitle: 'Riwayat Presensi' }} />
-      <Tabs.Screen name="profil" options={{ title: 'Profil', headerTitle: 'Profil Praktikan' }} />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Jadwal',
+          headerTitle: 'Jadwal Praktikum',
+        }}
+      />
+      <Tabs.Screen
+        name="riwayat"
+        options={{
+          title: 'Riwayat',
+          headerTitle: 'Riwayat Presensi',
+        }}
+      />
+      <Tabs.Screen
+        name="izin"
+        options={{
+          title: 'Izin',
+          headerTitle: 'Pengajuan Izin',
+        }}
+      />
+      <Tabs.Screen
+        name="profil"
+        options={{
+          title: 'Profil',
+          headerTitle: 'Profil Praktikan',
+        }}
+      />
     </Tabs>
   );
 }
