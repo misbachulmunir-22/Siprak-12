@@ -44,6 +44,13 @@ export default function PraktikanLayout() {
         }}
       />
       <Tabs.Screen
+        name="izin"
+        options={{
+          title: 'Izin',
+          headerTitle: 'Pengajuan Izin',
+        }}
+      />
+      <Tabs.Screen
         name="profil"
         options={{
           title: 'Profil',

@@ -1,15 +1,23 @@
+import React from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 type PresensiSuccessSheetProps = {
   visible: boolean;
   waktuHadir: string;
+  pertemuan?: number;
+  praktikum?: string;
   onClose: () => void;
 };
 
-/** Bottom sheet lokal untuk konfirmasi sukses, tanpa dependensi native tambahan. */
+/**
+ * Bottom sheet lokal untuk konfirmasi sukses presensi praktikan.
+ * Memenuhi NFR-S2-07 (Area sentuh >= 44dp, Bahasa Indonesia).
+ */
 export default function PresensiSuccessSheet({
   visible,
   waktuHadir,
+  pertemuan,
+  praktikum,
   onClose,
 }: PresensiSuccessSheetProps) {
   return (
@@ -34,14 +42,19 @@ export default function PresensiSuccessSheet({
           </View>
           <Text style={styles.title}>Presensi berhasil!</Text>
           <Text style={styles.description}>
-            Kehadiranmu sudah tercatat pada sesi ini. Berikut waktu presensi yang tersimpan di aplikasi.
+            {praktikum
+              ? `Kehadiranmu untuk ${praktikum}${pertemuan ? ` Pertemuan ${pertemuan}` : ''} telah tersimpan di server.`
+              : 'Kehadiranmu sudah tercatat pada sesi ini. Berikut waktu presensi resmi yang tersimpan.'}
           </Text>
+
           <View style={styles.timeCard}>
-            <Text style={styles.timeLabel}>WAKTU KEHADIRAN</Text>
+            <Text style={styles.timeLabel}>WAKTU KEHADIRAN RESMI</Text>
             <Text style={styles.timeValue}>{waktuHadir}</Text>
           </View>
+
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel="Selesai dan tutup"
             onPress={onClose}
             style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
           >
@@ -62,7 +75,7 @@ const styles = StyleSheet.create({
   sheet: {
     paddingHorizontal: 24,
     paddingTop: 12,
-    paddingBottom: 30,
+    paddingBottom: 32,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     backgroundColor: '#FFFFFF',
@@ -73,7 +86,7 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 5,
     backgroundColor: '#D8DEE8',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   successIcon: {
     width: 64,
@@ -87,7 +100,7 @@ const styles = StyleSheet.create({
   checkmark: { color: '#15803D', fontSize: 34, fontWeight: '800' },
   title: {
     color: '#10223D',
-    fontSize: 23,
+    fontSize: 22,
     fontWeight: '800',
     textAlign: 'center',
   },
@@ -97,23 +110,24 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     textAlign: 'center',
     marginTop: 8,
-    marginBottom: 20,
+    marginBottom: 18,
   },
   timeCard: {
     width: '100%',
     borderRadius: 16,
     paddingHorizontal: 18,
-    paddingVertical: 16,
-    backgroundColor: '#F2F7FF',
+    paddingVertical: 14,
+    backgroundColor: '#F0FDF4',
     borderWidth: 1,
-    borderColor: '#DBEAFE',
-    marginBottom: 18,
+    borderColor: '#BBF7D0',
+    marginBottom: 20,
+    alignItems: 'center',
   },
-  timeLabel: { color: '#64748B', fontSize: 11, fontWeight: '800', letterSpacing: 1.1 },
-  timeValue: { color: '#1D4ED8', fontSize: 24, fontWeight: '800', marginTop: 6 },
+  timeLabel: { color: '#166534', fontSize: 11, fontWeight: '800', letterSpacing: 1.1 },
+  timeValue: { color: '#15803D', fontSize: 24, fontWeight: '900', marginTop: 4 },
   button: {
     width: '100%',
-    minHeight: 50,
+    minHeight: 48,
     borderRadius: 14,
     backgroundColor: '#245BDB',
     justifyContent: 'center',

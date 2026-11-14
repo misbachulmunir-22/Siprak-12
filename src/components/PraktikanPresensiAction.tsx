@@ -1,135 +1,183 @@
-import { useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { router } from 'expo-router';
 
 import PresensiSuccessSheet from '@/components/PresensiSuccessSheet';
 import { useSiprakContext } from '@/context/SiprakContext';
-import type { PraktikanPresensiActionProps } from '@/types/siprak';
+import { recordAttendance, subscribeAttendance } from '@/services/attendanceWriteService';
+import type { PraktikanPresensiActionProps, Presensi } from '@/types/siprak';
+import { formatJam } from '@/utils/presensi';
 
-type CheckInReason = 'belum_dibuka' | 'ditutup' | 'sudah_presensi';
-
-function formatJam(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '--:--';
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${hours}:${minutes}`;
-}
-
-function reasonMessage(reason: CheckInReason | undefined): string {
-  switch (reason) {
-    case 'belum_dibuka':
-      return 'Presensi belum dibuka oleh asisten. Silakan tunggu sampai sesi dimulai.';
-    case 'ditutup':
-      return 'Sesi sudah ditutup. Presensi baru tidak dapat dilakukan.';
-    case 'sudah_presensi':
-      return 'Presensimu untuk sesi ini sudah tercatat. Kamu tidak perlu melakukan presensi lagi.';
-    default:
-      return 'Presensi belum dapat diproses. Periksa status sesi atau coba lagi.';
-  }
-}
-
-/** Aksi presensi Programmer 4 pada halaman detail sesi. */
+/**
+ * Komponen Aksi Presensi Praktikan (Owner: Programmer 4)
+ * Menangani:
+ * - FR-S2-11: Presensi hanya saat sesi dibuka
+ * - FR-S2-12: Pencegahan presensi ganda & race condition
+ * - FR-S2-13: Listener presensi real-time dengan cleanup unsubscribe
+ * - FR-S2-21: Loading state, error handling, konfirmasi
+ */
 export default function PraktikanPresensiAction({ sesi }: PraktikanPresensiActionProps) {
-  const { currentUser, sessions, getUserAttendance, checkIn } = useSiprakContext();
+  const { currentUser, sessions, checkIn, getUserAttendance } = useSiprakContext();
+
   const [confirmVisible, setConfirmVisible] = useState(false);
   const [successVisible, setSuccessVisible] = useState(false);
   const [successTime, setSuccessTime] = useState('');
-  const [feedback, setFeedback] = useState('');
-  const [waitingForAttendance, setWaitingForAttendance] = useState(false);
+  const [feedback, setFeedback] = useState<{ message: string; type: 'info' | 'error' | 'success' } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [serverAttendance, setServerAttendance] = useState<Presensi | null>(null);
   const submittingRef = useRef(false);
 
-  // Context adalah sumber data terbaru; prop menjadi fallback saat sesi tidak ditemukan.
+  // Ambil data sesi paling mutakhir dari context jika ada
   const activeSesi = sessions.find((item) => item.id === sesi.id) ?? sesi;
-  const attendance = currentUser?.peran === 'praktikan'
+
+  // Fallback ke context attendance jika serverAttendance belum terisi
+  const contextAttendance = currentUser?.peran === 'praktikan'
     ? getUserAttendance(currentUser.id).find((item) => item.sesiId === activeSesi.id)
     : undefined;
 
-  // Gunakan waktu persis yang disimpan Context, bukan membuat cap waktu kedua di UI.
+  const currentAttendance = serverAttendance ?? contextAttendance;
+
+  // Pasang listener real-time presensi sesi ini untuk praktikan aktif (FR-S2-13)
   useEffect(() => {
-    if (waitingForAttendance && attendance) {
-      setSuccessTime(formatJam(attendance.waktuHadir));
-      setSuccessVisible(true);
-      setWaitingForAttendance(false);
-      submittingRef.current = false;
-      setFeedback('');
-    }
-  }, [attendance, waitingForAttendance]);
+    if (!currentUser || currentUser.peran !== 'praktikan') return;
+
+    const unsubscribe = subscribeAttendance(
+      activeSesi.id,
+      currentUser.id,
+      (att) => {
+        if (att) {
+          setServerAttendance(att);
+        }
+      },
+      (error) => {
+        // Jangan crash UI jika listener gagal
+        console.warn('Attendance listener error:', error.message);
+      }
+    );
+
+    return () => {
+      // Cleanup listener saat unmount / pindah layar (FR-S2-13, NFR-S2-06)
+      unsubscribe();
+    };
+  }, [activeSesi.id, currentUser]);
 
   if (!currentUser || currentUser.peran !== 'praktikan') {
     return (
       <View style={styles.notice}>
         <Text style={styles.noticeTitle}>Masuk sebagai praktikan</Text>
-        <Text style={styles.noticeText}>Pilih identitas praktikan untuk melakukan presensi.</Text>
+        <Text style={styles.noticeText}>
+          Pilih akun praktikan yang terdaftar untuk mencatat kehadiran sesi ini.
+        </Text>
       </View>
     );
   }
 
-  const hasAttended = Boolean(attendance);
+  const hasAttended = Boolean(currentAttendance);
   const isOpen = activeSesi.status === 'dibuka';
   const isNotStarted = activeSesi.status === 'belum_dibuka';
   const isClosed = activeSesi.status === 'ditutup';
 
-  const openConfirmation = () => {
-    if (submittingRef.current || waitingForAttendance) return;
-    setFeedback('');
-    if (attendance) {
-      setFeedback(`Presensi sudah tercatat pukul ${formatJam(attendance.waktuHadir)}.`);
+  const handleOpenConfirmation = () => {
+    if (submittingRef.current || submitting) return;
+    setFeedback(null);
+
+    if (currentAttendance) {
+      setFeedback({
+        message: `Presensi sudah tercatat pukul ${formatJam(currentAttendance.waktuHadir)}.`,
+        type: 'info',
+      });
       return;
     }
     if (isNotStarted) {
-      setFeedback('Presensi belum dibuka. Silakan tunggu sampai asisten membuka sesi.');
+      setFeedback({
+        message: 'Presensi belum dibuka. Silakan tunggu hingga asisten membuka sesi praktikum.',
+        type: 'info',
+      });
       return;
     }
     if (isClosed) {
-      setFeedback('Sesi sudah ditutup. Presensi baru tidak dapat dilakukan.');
+      setFeedback({
+        message: 'Sesi praktikum sudah ditutup. Presensi baru tidak dapat dilakukan.',
+        type: 'error',
+      });
       return;
     }
+
     setConfirmVisible(true);
   };
 
-  const confirmCheckIn = () => {
-    // Tahan pengiriman sampai Context mengembalikan catatan presensi terbaru.
-    if (submittingRef.current || waitingForAttendance) return;
+  const handleConfirmCheckIn = async () => {
+    if (submittingRef.current || submitting) return;
     submittingRef.current = true;
+    setSubmitting(true);
     setConfirmVisible(false);
-    let accepted = false;
+    setFeedback(null);
 
     try {
-      const result = checkIn(activeSesi.id);
-      if (!result.ok) {
-        setFeedback(reasonMessage(result.reason));
-        return;
-      }
+      // 1. Coba catat via attendanceWriteService (Firestore / fallback service)
+      const res = await recordAttendance(activeSesi, currentUser.id, activeSesi.classId);
 
-      accepted = true;
-      setFeedback('');
-      setWaitingForAttendance(true);
-    } catch {
-      setFeedback('Presensi gagal diproses. Silakan coba lagi.');
+      if (res.ok && res.attendance) {
+        setServerAttendance(res.attendance);
+        const formatted = formatJam(res.attendance.waktuHadir);
+        setSuccessTime(formatted);
+        setSuccessVisible(true);
+        // Sinkronkan juga ke memory context jika context tersedia
+        checkIn(activeSesi.id);
+      } else if (res.reason === 'sudah_presensi') {
+        if (res.attendance) setServerAttendance(res.attendance);
+        setFeedback({
+          message: res.message || 'Presensimu untuk sesi ini sudah tercatat.',
+          type: 'info',
+        });
+      } else {
+        setFeedback({
+          message: res.message || 'Presensi gagal diproses. Silakan coba lagi.',
+          type: 'error',
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kegagalan jaringan atau server.';
+      setFeedback({
+        message: msg,
+        type: 'error',
+      });
     } finally {
-      if (!accepted) submittingRef.current = false;
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   };
 
+  const handleGoToIzin = () => {
+    router.push('/praktikan/izin');
+  };
+
   let buttonLabel = 'Presensi sekarang';
-  let buttonDisabled = waitingForAttendance;
-  let helperText = 'Pastikan kamu berada di sesi praktikum yang benar.';
+  let buttonDisabled = submitting;
+  let helperText = 'Pastikan kamu berada di ruangan lab dan sesi praktikum yang benar.';
   let stateColor = '#245BDB';
 
-  if (hasAttended && attendance) {
-    buttonLabel = `Sudah presensi pukul ${formatJam(attendance.waktuHadir)}`;
-    // Tombol tetap dapat ditekan untuk menampilkan pesan, tetapi tidak mengirim presensi kedua.
-    helperText = 'Kehadiranmu untuk sesi ini sudah tersimpan.';
+  if (hasAttended && currentAttendance) {
+    buttonLabel = `Sudah presensi pukul ${formatJam(currentAttendance.waktuHadir)}`;
+    buttonDisabled = false; // Memungkinkan klik untuk menampilkan detail jam hadir
+    helperText = 'Kehadiranmu untuk sesi ini sudah terverifikasi dan tersimpan.';
     stateColor = '#15803D';
   } else if (isNotStarted) {
     buttonLabel = 'Presensi belum dibuka';
     buttonDisabled = true;
-    helperText = 'Tombol presensi aktif setelah asisten membuka sesi.';
+    helperText = 'Tombol presensi akan otomatis aktif setelah asisten membuka sesi.';
     stateColor = '#64748B';
   } else if (isClosed) {
     buttonLabel = 'Sesi sudah ditutup';
     buttonDisabled = true;
-    helperText = 'Hubungi asisten jika ada kendala kehadiran.';
+    helperText = 'Sesi telah berakhir. Jika berhalangan hadir, kamu dapat mengajukan izin.';
     stateColor = '#B45309';
   }
 
@@ -159,17 +207,34 @@ export default function PraktikanPresensiAction({ sesi }: PraktikanPresensiActio
       </View>
 
       <Text style={styles.helperText}>{helperText}</Text>
+
       {feedback ? (
-        <View style={styles.feedbackBox} accessibilityLiveRegion="polite">
-          <Text style={styles.feedbackText}>{feedback}</Text>
+        <View
+          style={[
+            styles.feedbackBox,
+            feedback.type === 'error' && styles.feedbackBoxError,
+            feedback.type === 'success' && styles.feedbackBoxSuccess,
+          ]}
+          accessibilityLiveRegion="polite"
+        >
+          <Text
+            style={[
+              styles.feedbackText,
+              feedback.type === 'error' && styles.feedbackTextError,
+              feedback.type === 'success' && styles.feedbackTextSuccess,
+            ]}
+          >
+            {feedback.message}
+          </Text>
         </View>
       ) : null}
 
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel={buttonLabel}
         accessibilityState={{ disabled: buttonDisabled }}
         disabled={buttonDisabled}
-        onPress={openConfirmation}
+        onPress={handleOpenConfirmation}
         style={({ pressed }) => [
           styles.primaryButton,
           buttonDisabled && styles.primaryButtonDisabled,
@@ -177,17 +242,38 @@ export default function PraktikanPresensiAction({ sesi }: PraktikanPresensiActio
           pressed && !buttonDisabled && styles.primaryButtonPressed,
         ]}
       >
-        <Text
-          style={[
-            styles.primaryButtonText,
-            buttonDisabled && styles.primaryButtonTextDisabled,
-            hasAttended && styles.primaryButtonTextAttended,
-          ]}
-        >
-          {waitingForAttendance ? 'Mencatat presensi...' : buttonLabel}
-        </Text>
+        {submitting ? (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator size="small" color="#FFFFFF" />
+            <Text style={styles.primaryButtonText}>Mencatat presensi...</Text>
+          </View>
+        ) : (
+          <Text
+            style={[
+              styles.primaryButtonText,
+              buttonDisabled && styles.primaryButtonTextDisabled,
+              hasAttended && styles.primaryButtonTextAttended,
+            ]}
+          >
+            {buttonLabel}
+          </Text>
+        )}
       </Pressable>
 
+      {/* Akses cepat ke pengajuan izin bagi praktikan yang berhalangan hadir */}
+      {!hasAttended ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Tidak dapat hadir? Ajukan izin praktikum"
+          onPress={handleGoToIzin}
+          hitSlop={8}
+          style={styles.izinLink}
+        >
+          <Text style={styles.izinLinkText}>Berhalangan hadir? Ajukan izin praktikum ›</Text>
+        </Pressable>
+      ) : null}
+
+      {/* Modal Konfirmasi Presensi */}
       <Modal
         visible={confirmVisible}
         transparent
@@ -201,20 +287,31 @@ export default function PraktikanPresensiAction({ sesi }: PraktikanPresensiActio
             </View>
             <Text style={styles.modalTitle}>Konfirmasi presensi</Text>
             <Text style={styles.modalDescription}>
-              Kamu akan mencatat kehadiran untuk {activeSesi.praktikum}, kelas {activeSesi.kelas}. Pastikan sesi ini benar.
+              Kamu akan mencatat kehadiran untuk{' '}
+              <Text style={styles.boldText}>{activeSesi.praktikum}</Text>, kelas{' '}
+              <Text style={styles.boldText}>{activeSesi.kelas}</Text>. Pastikan kamu telah berada
+              di ruangan lab praktikum.
             </Text>
             <View style={styles.modalActions}>
               <Pressable
                 accessibilityRole="button"
+                accessibilityLabel="Batal presensi"
                 onPress={() => setConfirmVisible(false)}
-                style={({ pressed }) => [styles.secondaryButton, pressed && styles.primaryButtonPressed]}
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  pressed && styles.primaryButtonPressed,
+                ]}
               >
                 <Text style={styles.secondaryButtonText}>Batal</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                onPress={confirmCheckIn}
-                style={({ pressed }) => [styles.confirmButton, pressed && styles.primaryButtonPressed]}
+                accessibilityLabel="Ya, konfirmasi presensi sekarang"
+                onPress={handleConfirmCheckIn}
+                style={({ pressed }) => [
+                  styles.confirmButton,
+                  pressed && styles.primaryButtonPressed,
+                ]}
               >
                 <Text style={styles.confirmButtonText}>Ya, presensi</Text>
               </Pressable>
@@ -223,9 +320,12 @@ export default function PraktikanPresensiAction({ sesi }: PraktikanPresensiActio
         </View>
       </Modal>
 
+      {/* Bottom Sheet Sukses Presensi */}
       <PresensiSuccessSheet
         visible={successVisible}
         waktuHadir={successTime}
+        pertemuan={activeSesi.pertemuan}
+        praktikum={activeSesi.praktikum}
         onClose={() => setSuccessVisible(false)}
       />
     </View>
@@ -274,7 +374,17 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
   },
+  feedbackBoxError: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  feedbackBoxSuccess: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
   feedbackText: { color: '#9A3412', fontSize: 13, lineHeight: 19 },
+  feedbackTextError: { color: '#B91C1C' },
+  feedbackTextSuccess: { color: '#15803D' },
   primaryButton: {
     minHeight: 48,
     borderRadius: 14,
@@ -284,12 +394,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginTop: 2,
   },
-  primaryButtonDisabled: { backgroundColor: '#EEF2F7', borderWidth: 1, borderColor: '#DCE3EC' },
-  primaryButtonAttended: { backgroundColor: '#DCFCE7', borderWidth: 1, borderColor: '#BBF7D0' },
+  primaryButtonDisabled: {
+    backgroundColor: '#EEF2F7',
+    borderWidth: 1,
+    borderColor: '#DCE3EC',
+  },
+  primaryButtonAttended: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
   primaryButtonPressed: { opacity: 0.82 },
-  primaryButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800', textAlign: 'center' },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
   primaryButtonTextDisabled: { color: '#64748B' },
   primaryButtonTextAttended: { color: '#166534' },
+  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  izinLink: {
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  izinLinkText: {
+    color: '#245BDB',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.48)',
@@ -321,6 +456,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 20,
   },
+  boldText: { fontWeight: '700', color: '#10223D' },
   modalActions: { flexDirection: 'row', gap: 10, alignSelf: 'stretch' },
   secondaryButton: {
     flex: 1,
@@ -340,7 +476,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   confirmButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
-  notice: { padding: 16, borderRadius: 16, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0' },
+  notice: {
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
   noticeTitle: { color: '#10223D', fontSize: 15, fontWeight: '800' },
   noticeText: { color: '#64748B', fontSize: 13, lineHeight: 19, marginTop: 5 },
 });
