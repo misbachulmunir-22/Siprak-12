@@ -21,3 +21,4 @@ export const isFirebaseConfigured = (): boolean => {
     process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID
   );
 };
+
