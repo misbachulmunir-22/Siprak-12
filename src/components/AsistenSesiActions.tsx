@@ -1,504 +1,168 @@
-﻿import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
+  ActivityIndicator,
   Modal,
+  Pressable,
+  StyleSheet,
+  Text,
   TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
+  View,
 } from 'react-native';
-import { router } from 'expo-router';
-import { AsistenSesiActionsProps } from '@/types/siprak';
+import { router, type Href } from 'expo-router';
 import { useSiprakContext } from '@/context/SiprakContext';
+import type { Sesi, StatusSesi } from '@/types/siprak';
+import { closeSession, openSession, subscribeSession } from '@/services/sessionService';
 
-export function AsistenSesiActions({ sesi }: AsistenSesiActionsProps) {
-  const { openSession, closeSession } = useSiprakContext();
+type PendingAction = 'open' | 'close' | null;
 
-  const [modalBukaVisible, setModalBukaVisible] = useState(false);
-  const [modalTutupVisible, setModalTutupVisible] = useState(false);
-  const [catatanText, setCatatanText] = useState('');
+function readableError(error: Error): string {
+  if (error.message.includes('permission-denied')) return 'Akun ini tidak memiliki akses untuk mengelola sesi pada kelas tersebut.';
+  if (error.message.includes('unavailable') || error.message.includes('network')) return 'Koneksi ke server gagal. Periksa internet lalu coba lagi.';
+  return error.message || 'Perubahan sesi gagal disimpan. Silakan coba lagi.';
+}
 
-  const isBelumDibuka = sesi.status === 'belum_dibuka';
-  const isDibuka = sesi.status === 'dibuka';
-  const isDitutup = sesi.status === 'ditutup';
+function statusLabel(status: StatusSesi): string {
+  if (status === 'dibuka') return 'Dibuka';
+  if (status === 'ditutup') return 'Ditutup';
+  return 'Belum dibuka';
+}
 
-  const handleConfirmBuka = () => {
-    openSession(sesi.id);
-    setModalBukaVisible(false);
-  };
+export function AsistenSesiActions({ sesi }: { sesi: Sesi }) {
+  const { currentUser } = useSiprakContext();
+  const [liveSession, setLiveSession] = useState<Sesi | null>(null);
+  const [dialog, setDialog] = useState<PendingAction>(null);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleConfirmTutup = () => {
-    closeSession(sesi.id, catatanText);
-    setCatatanText('');
-    setModalTutupVisible(false);
-  };
+  useEffect(() => {
+    return subscribeSession(sesi.id, (updated) => {
+      setLiveSession(updated);
+      setError(null);
+    }, (listenerError) => setError(readableError(listenerError)));
+  }, [sesi.id]);
 
-  const handleNavigasiRekap = () => {
-    router.push({
-      pathname: '/rekap/[id]',
-      params: { id: sesi.id },
-    });
-  };
+  const activeSession = liveSession?.id === sesi.id ? liveSession : sesi;
 
-  const formatWaktu = (isoString?: string) => {
-    if (!isoString) return '-';
+  const canOpen = activeSession.status === 'belum_dibuka';
+  const canClose = activeSession.status === 'dibuka';
+
+  const confirmAction = async () => {
+    if (!currentUser || currentUser.peran !== 'asisten' || busy) return;
+    setBusy(true);
+    setError(null);
     try {
-      const d = new Date(isoString);
-      const jam = String(d.getHours()).padStart(2, '0');
-      const menit = String(d.getMinutes()).padStart(2, '0');
-      return `${jam}:${menit} WIB`;
-    } catch {
-      return isoString;
+      if (dialog === 'open') await openSession(activeSession.id);
+      if (dialog === 'close') await closeSession(activeSession.id, note);
+      setDialog(null);
+      setNote('');
+    } catch (actionError: unknown) {
+      setError(readableError(actionError instanceof Error ? actionError : new Error('Gagal menyimpan perubahan.')));
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Panel Pengelolaan Asisten</Text>
-        <Text style={styles.sectionSubtitle}>
-          Kelola status pelaksanaan sesi praktikum dan pantau kehadiran mahasiswa.
+    <View style={styles.card}>
+      <Text style={styles.title}>Pengelolaan sesi</Text>
+      <View style={styles.statusRow}>
+        <Text style={styles.label}>Status sesi</Text>
+        <Text style={[styles.status, activeSession.status === 'dibuka' && styles.statusOpen, activeSession.status === 'ditutup' && styles.statusClosed]}>
+          {statusLabel(activeSession.status)}
         </Text>
-
-        {/* Informasi Status Sesi */}
-        <View style={styles.statusInfoBox}>
-          <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Status Sesi</Text>
-            <View
-              style={[
-                styles.statusPill,
-                isBelumDibuka && styles.pillBelum,
-                isDibuka && styles.pillDibuka,
-                isDitutup && styles.pillDitutup,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.pillText,
-                  isBelumDibuka && styles.textBelum,
-                  isDibuka && styles.textDibuka,
-                  isDitutup && styles.textDitutup,
-                ]}
-              >
-                {isBelumDibuka
-                  ? 'Belum Dibuka'
-                  : isDibuka
-                  ? 'Sedang Dibuka'
-                  : 'Telah Ditutup'}
-              </Text>
-            </View>
-          </View>
-
-          {sesi.dibukaPada ? (
-            <View style={styles.metaRow}>
-              <Text style={styles.metaLabel}>Waktu Dibuka</Text>
-              <Text style={styles.metaValue}>{formatWaktu(sesi.dibukaPada)}</Text>
-            </View>
-          ) : null}
-
-          {sesi.ditutupPada ? (
-            <View style={styles.metaRow}>
-              <Text style={styles.metaLabel}>Waktu Ditutup</Text>
-              <Text style={styles.metaValue}>{formatWaktu(sesi.ditutupPada)}</Text>
-            </View>
-          ) : null}
-
-          {sesi.catatanPenutup ? (
-            <View style={styles.catatanBox}>
-              <Text style={styles.catatanTitle}>Catatan Penutup</Text>
-              <Text style={styles.catatanBody}>{sesi.catatanPenutup}</Text>
-            </View>
-          ) : null}
-        </View>
-
-        {/* Tombol Aksi Utama */}
-        <View style={styles.actionButtonsContainer}>
-          {isBelumDibuka && (
-            <TouchableOpacity
-              style={[styles.btnBase, styles.btnBuka]}
-              onPress={() => setModalBukaVisible(true)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.btnBukaText}>Buka Sesi Praktikum</Text>
-            </TouchableOpacity>
-          )}
-
-          {isDibuka && (
-            <TouchableOpacity
-              style={[styles.btnBase, styles.btnTutup]}
-              onPress={() => setModalTutupVisible(true)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.btnTutupText}>Tutup Sesi Praktikum</Text>
-            </TouchableOpacity>
-          )}
-
-          {isDitutup && (
-            <View style={styles.infoDitutupBox}>
-              <Text style={styles.infoDitutupText}>
-                Sesi praktikum telah selesai dan ditutup. Pencatatan kehadiran baru tidak dapat dilakukan.
-              </Text>
-            </View>
-          )}
-
-          {/* Tombol Lihat Rekap Kehadiran */}
-          <TouchableOpacity
-            style={[styles.btnBase, styles.btnSecondary]}
-            onPress={handleNavigasiRekap}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.btnSecondaryText}>Lihat Rekap Kehadiran</Text>
-          </TouchableOpacity>
-        </View>
       </View>
+      {activeSession.dibukaPada ? <Info label="Dibuka pada" value={formatTime(activeSession.dibukaPada)} /> : null}
+      {activeSession.ditutupPada ? <Info label="Ditutup pada" value={formatTime(activeSession.ditutupPada)} /> : null}
+      {activeSession.catatanPenutup ? <Info label="Catatan penutup" value={activeSession.catatanPenutup} /> : null}
 
-      {/* Modal Konfirmasi Buka Sesi */}
-      <Modal
-        visible={modalBukaVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setModalBukaVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Buka Sesi Praktikum</Text>
-            <Text style={styles.modalMessage}>
-              Sesi akan diaktifkan dan praktikan yang terdaftar dapat melakukan presensi mandiri.
+      {currentUser?.peran === 'asisten' && canOpen ? (
+        <ActionButton label="Buka sesi" onPress={() => setDialog('open')} />
+      ) : null}
+      {currentUser?.peran === 'asisten' && canClose ? (
+        <ActionButton label="Tutup sesi" destructive onPress={() => setDialog('close')} />
+      ) : null}
+      {activeSession.status === 'ditutup' ? <Text style={styles.helper}>Sesi ditutup dan tidak dapat dibuka kembali.</Text> : null}
+      <ActionButton label="Lihat rekap kehadiran" secondary onPress={() => router.push(`/rekap/${activeSession.id}` as Href)} />
+      {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+
+      <Modal transparent animationType="fade" visible={dialog !== null} onRequestClose={() => { if (!busy) setDialog(null); }}>
+        <View style={styles.backdrop}>
+          <View style={styles.dialog}>
+            <Text style={styles.dialogTitle}>{dialog === 'open' ? 'Buka sesi praktikum?' : 'Tutup sesi praktikum?'}</Text>
+            <Text style={styles.helper}>
+              {dialog === 'open'
+                ? 'Praktikan pada kelas ini dapat melakukan presensi setelah sesi dibuka.'
+                : 'Setelah ditutup, sesi tidak dapat dibuka kembali dan presensi baru ditolak.'}
             </Text>
-
-            <View style={styles.modalDetailBox}>
-              <Text style={styles.modalDetailItem}>
-                Praktikum: {sesi.praktikum}
-              </Text>
-              <Text style={styles.modalDetailItem}>
-                Pertemuan: Ke-{sesi.pertemuan} ({sesi.kelas})
-              </Text>
-            </View>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnCancel]}
-                onPress={() => setModalBukaVisible(false)}
-              >
-                <Text style={styles.modalBtnCancelText}>Batal</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnConfirmBuka]}
-                onPress={handleConfirmBuka}
-              >
-                <Text style={styles.modalBtnConfirmText}>Konfirmasi Buka</Text>
-              </TouchableOpacity>
+            {dialog === 'close' ? (
+              <TextInput
+                accessibilityLabel="Catatan penutup (opsional)"
+                value={note}
+                onChangeText={setNote}
+                placeholder="Catatan penutup (opsional)"
+                multiline
+                textAlignVertical="top"
+                style={styles.input}
+              />
+            ) : null}
+            <View style={styles.dialogButtons}>
+              <Pressable accessibilityRole="button" disabled={busy} onPress={() => setDialog(null)} style={styles.cancelButton}>
+                <Text style={styles.cancelText}>Batal</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" disabled={busy} onPress={confirmAction} style={[styles.confirmButton, dialog === 'close' && styles.destructiveButton]}>
+                {busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.confirmText}>Konfirmasi</Text>}
+              </Pressable>
             </View>
           </View>
         </View>
-      </Modal>
-
-      {/* Modal Konfirmasi Tutup Sesi */}
-      <Modal
-        visible={modalTutupVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setModalTutupVisible(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalBackdrop}
-        >
-          <View style={styles.modalCard}>
-            <ScrollView bounces={false}>
-              <Text style={styles.modalTitle}>Tutup Sesi Praktikum</Text>
-              <Text style={styles.modalMessage}>
-                Setelah ditutup, status sesi tidak dapat dibuka kembali dan presensi baru akan ditolak.
-              </Text>
-
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>
-                  Catatan Evaluasi / Penutup (Opsional)
-                </Text>
-                <TextInput
-                  style={styles.textInputArea}
-                  placeholder="Tuliskan catatan evaluasi sesi praktikum..."
-                  placeholderTextColor="#94A3B8"
-                  multiline
-                  numberOfLines={4}
-                  textAlignVertical="top"
-                  value={catatanText}
-                  onChangeText={setCatatanText}
-                />
-              </View>
-
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={[styles.modalBtn, styles.modalBtnCancel]}
-                  onPress={() => setModalTutupVisible(false)}
-                >
-                  <Text style={styles.modalBtnCancelText}>Batal</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalBtn, styles.modalBtnConfirmTutup]}
-                  onPress={handleConfirmTutup}
-                >
-                  <Text style={styles.modalBtnConfirmText}>Tutup Sesi</Text>
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
 }
 
+function Info({ label, value }: { label: string; value: string }) {
+  return <View style={styles.info}><Text style={styles.label}>{label}</Text><Text style={styles.value}>{value}</Text></View>;
+}
+
+function ActionButton({ label, onPress, secondary = false, destructive = false }: { label: string; onPress: () => void; secondary?: boolean; destructive?: boolean }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={[styles.actionButton, secondary && styles.secondaryButton, destructive && styles.destructiveButton]}>
+      <Text style={[styles.actionText, secondary && styles.secondaryText]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit' }).format(date);
+}
+
 const styles = StyleSheet.create({
-  container: {
-    marginVertical: 12,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0F172A',
-    marginBottom: 4,
-  },
-  sectionSubtitle: {
-    fontSize: 13,
-    color: '#64748B',
-    lineHeight: 18,
-    marginBottom: 16,
-  },
-  statusInfoBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-    marginBottom: 16,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  statusLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  statusPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  pillBelum: {
-    backgroundColor: '#F1F5F9',
-  },
-  pillDibuka: {
-    backgroundColor: '#ECFDF5',
-  },
-  pillDitutup: {
-    backgroundColor: '#FEF2F2',
-  },
-  pillText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  textBelum: {
-    color: '#64748B',
-  },
-  textDibuka: {
-    color: '#059669',
-  },
-  textDitutup: {
-    color: '#DC2626',
-  },
-  metaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 4,
-  },
-  metaLabel: {
-    fontSize: 12,
-    color: '#64748B',
-  },
-  metaValue: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#0F172A',
-  },
-  catatanBox: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-  },
-  catatanTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#475569',
-    marginBottom: 4,
-  },
-  catatanBody: {
-    fontSize: 13,
-    color: '#1E293B',
-    lineHeight: 18,
-  },
-  actionButtonsContainer: {
-    gap: 10,
-  },
-  btnBase: {
-    minHeight: 46,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-  },
-  btnBuka: {
-    backgroundColor: '#0F766E',
-  },
-  btnBukaText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  btnTutup: {
-    backgroundColor: '#DC2626',
-  },
-  btnTutupText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  btnSecondary: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  btnSecondaryText: {
-    color: '#334155',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  infoDitutupBox: {
-    backgroundColor: '#F8FAFC',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  infoDitutupText: {
-    fontSize: 12,
-    color: '#64748B',
-    lineHeight: 18,
-    textAlign: 'center',
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 22,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0F172A',
-    marginBottom: 8,
-  },
-  modalMessage: {
-    fontSize: 13,
-    color: '#64748B',
-    lineHeight: 19,
-    marginBottom: 16,
-  },
-  modalDetailBox: {
-    backgroundColor: '#F8FAFC',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 18,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-  },
-  modalDetailItem: {
-    fontSize: 12,
-    color: '#334155',
-    marginBottom: 3,
-    fontWeight: '500',
-  },
-  inputContainer: {
-    marginBottom: 18,
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#334155',
-    marginBottom: 6,
-  },
-  textInputArea: {
-    minHeight: 88,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 8,
-    padding: 10,
-    fontSize: 13,
-    color: '#0F172A',
-    backgroundColor: '#F8FAFC',
-  },
-  modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 10,
-  },
-  modalBtn: {
-    minHeight: 42,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalBtnCancel: {
-    backgroundColor: '#F1F5F9',
-  },
-  modalBtnCancelText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  modalBtnConfirmBuka: {
-    backgroundColor: '#0F766E',
-  },
-  modalBtnConfirmTutup: {
-    backgroundColor: '#DC2626',
-  },
-  modalBtnConfirmText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
+  card: { backgroundColor: '#FFFFFF', borderColor: '#E3E8F0', borderRadius: 18, borderWidth: 1, padding: 18 },
+  title: { color: '#17243B', fontSize: 18, fontWeight: '800', marginBottom: 16 },
+  statusRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 },
+  label: { color: '#68758A', fontSize: 13, fontWeight: '600' },
+  status: { backgroundColor: '#FFF3D6', borderRadius: 20, color: '#805B00', fontSize: 12, fontWeight: '700', overflow: 'hidden', paddingHorizontal: 12, paddingVertical: 7 },
+  statusOpen: { backgroundColor: '#DFF5E9', color: '#17643D' },
+  statusClosed: { backgroundColor: '#E9EDF3', color: '#526074' },
+  info: { borderTopColor: '#EEF1F5', borderTopWidth: 1, marginBottom: 12, paddingTop: 11 },
+  value: { color: '#25354D', fontSize: 14, lineHeight: 20, marginTop: 4 },
+  helper: { color: '#65738A', fontSize: 13, lineHeight: 19, marginBottom: 10 },
+  actionButton: { alignItems: 'center', backgroundColor: '#315CCB', borderRadius: 12, justifyContent: 'center', marginTop: 10, minHeight: 48, paddingHorizontal: 14 },
+  destructiveButton: { backgroundColor: '#B42318' },
+  secondaryButton: { backgroundColor: '#EEF3FF' },
+  actionText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700', textAlign: 'center' },
+  secondaryText: { color: '#315CCB' },
+  error: { color: '#B42318', fontSize: 13, lineHeight: 19, marginTop: 12 },
+  backdrop: { alignItems: 'center', backgroundColor: 'rgba(15, 23, 42, 0.45)', flex: 1, justifyContent: 'center', padding: 20 },
+  dialog: { backgroundColor: '#FFFFFF', borderRadius: 18, maxWidth: 440, padding: 20, width: '100%' },
+  dialogTitle: { color: '#17243B', fontSize: 18, fontWeight: '800', marginBottom: 8 },
+  input: { borderColor: '#DCE3EC', borderRadius: 12, borderWidth: 1, color: '#25354D', minHeight: 92, padding: 12, marginTop: 10 },
+  dialogButtons: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16 },
+  cancelButton: { alignItems: 'center', justifyContent: 'center', marginRight: 8, minHeight: 48, minWidth: 84, paddingHorizontal: 12 },
+  cancelText: { color: '#526074', fontSize: 14, fontWeight: '700' },
+  confirmButton: { alignItems: 'center', backgroundColor: '#315CCB', borderRadius: 11, justifyContent: 'center', minHeight: 48, minWidth: 125, paddingHorizontal: 14 },
+  confirmText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
 });
