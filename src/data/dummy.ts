@@ -3,51 +3,65 @@ import { Pengguna, Presensi, Sesi } from '@/types/siprak';
 export const dummyAsisten: Pengguna = {
   id: 'asisten-1',
   nama: 'Budi Santoso, S.Kom.',
+  email: 'asisten@siprak.ac.id',
   peran: 'asisten',
+  aktif: true,
 };
 
 export const dummyPraktikanList: Pengguna[] = [
   {
     id: 'praktikan-1',
     nama: 'Ahmad Fauzi',
+    email: 'ahmad@siprak.ac.id',
     peran: 'praktikan',
     nim: '220101001',
     kelas: 'A',
+    aktif: true,
   },
   {
     id: 'praktikan-2',
     nama: 'Bella Septiani',
+    email: 'bella@siprak.ac.id',
     peran: 'praktikan',
     nim: '220101002',
     kelas: 'A',
+    aktif: true,
   },
   {
     id: 'praktikan-3',
     nama: 'Citra Dewi',
+    email: 'citra@siprak.ac.id',
     peran: 'praktikan',
     nim: '220101003',
     kelas: 'A',
+    aktif: true,
   },
   {
     id: 'praktikan-4',
     nama: 'Dimas Prasetyo',
+    email: 'dimas@siprak.ac.id',
     peran: 'praktikan',
     nim: '220101004',
     kelas: 'A',
+    aktif: true,
   },
   {
     id: 'praktikan-5',
     nama: 'Eka Rahmawati',
+    email: 'eka@siprak.ac.id',
     peran: 'praktikan',
     nim: '220101005',
     kelas: 'A',
+    aktif: true,
   },
   {
     id: 'praktikan-6',
     nama: 'Fajar Nugraha',
+    email: 'fajar@siprak.ac.id',
     peran: 'praktikan',
     nim: '220101006',
     kelas: 'A',
+    aktif: true,
   },
 ];
 

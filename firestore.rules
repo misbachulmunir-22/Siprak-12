@@ -1,0 +1,243 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // B.1 FUNGSI OTORISASI, PROFIL, KELAS, DAN MEMBERSHIP (FR-S2-22)
+    // Owner: Programmer 1 (Jeje)
+    // =========================================================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasMyProfile() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveUser() {
+      return hasMyProfile() && myProfile().active == true;
+    }
+
+    function isAssistant() {
+      return isActiveUser() && myProfile().role == 'asisten';
+    }
+
+    function isPraktikan() {
+      return isActiveUser() && myProfile().role == 'praktikan';
+    }
+
+    function assistantFor(classId) {
+      return isAssistant()
+        && exists(/databases/$(database)/documents/classes/$(classId))
+        && request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.assistantUids;
+    }
+
+    function memberOf(classId) {
+      return isPraktikan()
+        && exists(/databases/$(database)/documents/classes/$(classId)/members/$(request.auth.uid))
+        && get(/databases/$(database)/documents/classes/$(classId)/members/$(request.auth.uid)).data.active == true;
+    }
+
+    // Mendukung kompatibilitas nama field `sessionId` (SRS Bab 6.2) maupun `sesiId` (SRS Bab 6.4)
+    function docSessionId(data) {
+      return 'sessionId' in data ? data.sessionId : data.sesiId;
+    }
+
+    // =========================================================================
+    // 1. KOLEKSI PROFIL PENGGUNA: users/{uid} (FR-S2-01, FR-S2-04, FR-S2-05)
+    // =========================================================================
+    match /users/{uid} {
+      // Pengguna dapat membaca profil miliknya sendiri.
+      // Asisten aktif dapat membaca profil akun praktikan untuk verifikasi pemetaan UID (FR-S2-05).
+      allow read: if signedIn() && (
+        request.auth.uid == uid ||
+        (isAssistant() && resource.data.role == 'praktikan')
+      );
+
+      // Registrasi akun baru: hanya boleh membuat dokumen milik sendiri dengan role == 'praktikan'.
+      // Role 'asisten' TIDAK BOLEH dipilih atau ditulis dari aplikasi klien (FR-S2-01, FR-S2-04).
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'praktikan'
+        && request.resource.data.active == true
+        && request.resource.data.nama is string
+        && request.resource.data.nama.size() > 0
+        && request.resource.data.email is string
+        && request.resource.data.email.size() > 0;
+
+      // Pemilik akun hanya boleh memperbarui nama, nim, dan updatedAt tanpa mengubah role/active/uid.
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.active == resource.data.active
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nama', 'nim', 'updatedAt']);
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // 2. KOLEKSI KELAS & ANGGOTA: classes/{classId} (FR-S2-05 s.d. FR-S2-07)
+    // =========================================================================
+    match /classes/{classId} {
+      allow read: if signedIn() && (assistantFor(classId) || memberOf(classId));
+
+      allow create: if isAssistant()
+        && request.resource.data.assistantUids is list
+        && request.auth.uid in request.resource.data.assistantUids
+        && request.resource.data.nama is string
+        && request.resource.data.nama.size() > 0
+        && request.resource.data.kode is string
+        && request.resource.data.kode.size() > 0
+        && request.resource.data.active == true;
+
+      allow update: if assistantFor(classId)
+        && request.resource.data.assistantUids == resource.data.assistantUids;
+
+      // Gunakan active = false untuk pengarsipan; dilarang hard delete (FR-S2-06)
+      allow delete: if false;
+
+      match /members/{uid} {
+        allow read: if signedIn() && (request.auth.uid == uid || assistantFor(classId));
+
+        allow create: if assistantFor(classId)
+          && request.resource.data.uid == uid
+          && exists(/databases/$(database)/documents/users/$(uid))
+          && get(/databases/$(database)/documents/users/$(uid)).data.role == 'praktikan'
+          && get(/databases/$(database)/documents/users/$(uid)).data.active == true;
+
+        allow update, delete: if assistantFor(classId);
+      }
+    }
+
+    // =========================================================================
+    // 3. KOLEKSI JADWAL: schedules/{scheduleId} (FR-S2-08, FR-S2-09)
+    // =========================================================================
+    match /schedules/{scheduleId} {
+      allow read: if signedIn() && (
+        assistantFor(resource.data.classId) ||
+        memberOf(resource.data.classId)
+      );
+
+      allow create: if assistantFor(request.resource.data.classId)
+        && request.resource.data.pertemuan is int
+        && request.resource.data.pertemuan >= 1;
+
+      allow update: if assistantFor(resource.data.classId)
+        && request.resource.data.classId == resource.data.classId;
+
+      allow delete: if false; // Gunakan pengarsipan (active = false)
+    }
+
+    // =========================================================================
+    // 4. KOLEKSI SESI PRAKTIKUM: sessions/{sessionId} (FR-S2-08 s.d. FR-S2-10)
+    // =========================================================================
+    match /sessions/{sessionId} {
+      allow read: if signedIn() && (
+        assistantFor(resource.data.classId) ||
+        memberOf(resource.data.classId)
+      );
+
+      allow create: if assistantFor(request.resource.data.classId)
+        && request.resource.data.status == 'belum_dibuka';
+
+      // Transisi status satu arah: belum_dibuka -> dibuka -> ditutup.
+      // Sesi yang sudah ditutup tidak dapat dibuka kembali (FR-S2-10).
+      allow update: if assistantFor(resource.data.classId)
+        && request.resource.data.classId == resource.data.classId
+        && (
+          request.resource.data.status == resource.data.status ||
+          (resource.data.status == 'belum_dibuka' && request.resource.data.status == 'dibuka') ||
+          (resource.data.status == 'dibuka' && request.resource.data.status == 'ditutup')
+        );
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // 5. KOLEKSI PRESENSI: attendances/{attendanceId} (FR-S2-11, FR-S2-12, FR-S2-14, FR-S2-15)
+    // =========================================================================
+    match /attendances/{attendanceId} {
+      allow read: if signedIn() && (
+        resource.data.praktikanUid == request.auth.uid ||
+        assistantFor(resource.data.classId)
+      );
+
+      // ID deterministik wajib `${sessionId}_${uid}`, sesi harus berstatus 'dibuka',
+      // praktikan harus anggota aktif kelas sesi tersebut, dan tidak boleh duplikat (FR-S2-11, FR-S2-12).
+      allow create: if signedIn()
+        && isPraktikan()
+        && request.resource.data.praktikanUid == request.auth.uid
+        && attendanceId == docSessionId(request.resource.data) + '_' + request.auth.uid
+        && memberOf(request.resource.data.classId)
+        && exists(/databases/$(database)/documents/sessions/$(docSessionId(request.resource.data)))
+        && get(/databases/$(database)/documents/sessions/$(docSessionId(request.resource.data))).data.classId == request.resource.data.classId
+        && get(/databases/$(database)/documents/sessions/$(docSessionId(request.resource.data))).data.status == 'dibuka'
+        && !exists(/databases/$(database)/documents/attendances/$(attendanceId));
+
+      allow update, delete: if false;
+    }
+
+    // =========================================================================
+    // 6. KOLEKSI PENGAJUAN IZIN: leaveRequests/{requestId} (FR-S2-16 s.d. FR-S2-20)
+    // =========================================================================
+    match /leaveRequests/{requestId} {
+      allow read: if signedIn() && (
+        resource.data.praktikanUid == request.auth.uid ||
+        assistantFor(resource.data.classId)
+      );
+
+      // Pengajuan izin awal wajib dibuat dengan status == 'menunggu' dan aiStatus == 'menunggu' (FR-S2-16, FR-S2-18).
+      allow create: if signedIn()
+        && isPraktikan()
+        && request.resource.data.praktikanUid == request.auth.uid
+        && memberOf(request.resource.data.classId)
+        && exists(/databases/$(database)/documents/sessions/$(docSessionId(request.resource.data)))
+        && get(/databases/$(database)/documents/sessions/$(docSessionId(request.resource.data))).data.classId == request.resource.data.classId
+        && request.resource.data.alasan is string
+        && request.resource.data.alasan.size() > 0
+        && request.resource.data.status == 'menunggu'
+        && request.resource.data.aiStatus == 'menunggu';
+
+      // (a) Pemohon hanya dapat memperbarui metadata klasifikasi AI miliknya saat status masih 'menunggu'.
+      //     Status keputusan ('status') TIDAK BOLEH diubah oleh praktikan atau hasil AI (FR-S2-17, FR-S2-18).
+      // (b) Asisten kelas berwenang hanya dapat mengubah keputusan ('disetujui' | 'ditolak') beserta reviewer (FR-S2-19).
+      allow update: if (
+        signedIn()
+        && isPraktikan()
+        && resource.data.praktikanUid == request.auth.uid
+        && resource.data.status == 'menunggu'
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.classId == resource.data.classId
+        && docSessionId(request.resource.data) == docSessionId(resource.data)
+        && request.resource.data.praktikanUid == resource.data.praktikanUid
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['aiStatus', 'aiCategory', 'aiConfidence', 'aiModel', 'aiProcessedAt', 'updatedAt'])
+        && request.resource.data.aiStatus in ['berhasil', 'gagal', 'tidak_tersedia']
+      ) || (
+        assistantFor(resource.data.classId)
+        && request.resource.data.classId == resource.data.classId
+        && docSessionId(request.resource.data) == docSessionId(resource.data)
+        && request.resource.data.praktikanUid == resource.data.praktikanUid
+        && resource.data.status == 'menunggu'
+        && request.resource.data.status in ['disetujui', 'ditolak']
+        && request.resource.data.reviewerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'reviewerUid', 'reviewedAt', 'reviewNote', 'updatedAt'])
+      );
+
+      allow delete: if false;
+    }
+
+    // Deny-by-default untuk seluruh koleksi lain (NFR-S2-04)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

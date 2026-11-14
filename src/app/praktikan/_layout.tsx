@@ -1,18 +1,36 @@
 import React from 'react';
 import { Redirect, Tabs } from 'expo-router';
+import LoadingState from '@/components/LoadingState';
 import { useSiprakContext } from '@/context/SiprakContext';
 import { colors } from '@/theme';
 
 export default function PraktikanLayout() {
-  const { currentUser } = useSiprakContext();
+  const { currentUser, authStatus } = useSiprakContext();
 
-  // Route guard: hanya pengguna yang sudah login dengan peran praktikan yang diizinkan
-  if (!currentUser) {
+  // Tampilkan loading saat status Firebase Auth sedang dipulihkan (SRS Bab 5.1 & FR-S2-21)
+  if (authStatus === 'initializing') {
+    return (
+      <LoadingState
+        fullScreen
+        title="Memverifikasi Akses Praktikan..."
+        description="Memeriksa otorisasi profil pengguna pada Cloud Firestore."
+      />
+    );
+  }
+
+  // Arahkan ke halaman status akun jika profil belum aktif atau gagal dimuat
+  if (authStatus === 'profile-pending' || authStatus === 'profile-error') {
+    return <Redirect href="/account-pending" />;
+  }
+
+  // Route guard: pengguna belum login diarahkan ke halaman masuk (FR-S2-03, FR-S2-04)
+  if (authStatus === 'unauthenticated' || !currentUser) {
     return <Redirect href="/" />;
   }
 
+  // Role guard: asisten diarahkan ke area asisten jika membuka rute praktikan (FR-S2-04, UT-S2-03)
   if (currentUser.peran !== 'praktikan') {
-    return <Redirect href="/" />;
+    return <Redirect href="/asisten" />;
   }
 
   return (

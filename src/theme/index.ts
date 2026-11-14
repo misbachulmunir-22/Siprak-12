@@ -1,12 +1,8 @@
-import { StatusSesi } from '@/types/siprak';
+import { StatusAI, StatusIzin, StatusSesi } from '@/types/siprak';
 
 /**
- * Tema bersama aplikasi Siprak-12.
+ * Tema bersama aplikasi Siprak-12 (Sprint 1 & Sprint 2).
  * Digunakan oleh seluruh modul untuk menjaga konsistensi visual.
- * 
- * CATATAN INTEGRASI UNTUK PROGRAMMER 2:
- * Komponen StatusBadge nantinya harus mengambil konfigurasi warna dan label
- * dari statusTokens di bawah ini.
  */
 
 export const colors = {
@@ -73,5 +69,60 @@ export const statusTokens: Record<
     label: 'Ditutup',
     background: '#E9EDF3',
     text: '#526074',
+  },
+};
+
+export const statusIzinTokens: Record<
+  StatusIzin,
+  {
+    label: string;
+    background: string;
+    text: string;
+  }
+> = {
+  menunggu: {
+    label: 'Menunggu',
+    background: '#FFF4D6',
+    text: '#825B00',
+  },
+  disetujui: {
+    label: 'Disetujui',
+    background: '#DFF5E9',
+    text: '#17643D',
+  },
+  ditolak: {
+    label: 'Ditolak',
+    background: '#FEE2E2',
+    text: '#991B1B',
+  },
+};
+
+export const statusAITokens: Record<
+  StatusAI,
+  {
+    label: string;
+    background: string;
+    text: string;
+  }
+> = {
+  menunggu: {
+    label: 'AI: Menunggu',
+    background: '#E0F2FE',
+    text: '#0369A1',
+  },
+  berhasil: {
+    label: 'AI: Terklasifikasi',
+    background: '#DCFCE7',
+    text: '#15803D',
+  },
+  gagal: {
+    label: 'AI: Gagal',
+    background: '#FEF3C7',
+    text: '#92400E',
+  },
+  tidak_tersedia: {
+    label: 'AI: Tidak tersedia',
+    background: '#F1F5F9',
+    text: '#475569',
   },
 };

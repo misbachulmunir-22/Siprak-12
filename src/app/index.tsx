@@ -1,205 +1,209 @@
 import React, { useEffect, useState } from 'react';
 import {
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import Button from '@/components/Button';
+import { Link, useRouter } from 'expo-router';
+import AuthForm from '@/components/AuthForm';
+import LoadingState from '@/components/LoadingState';
 import ScreenContainer from '@/components/ScreenContainer';
 import { useSiprakContext } from '@/context/SiprakContext';
-import { dummyAsisten } from '@/data/dummy';
 import { colors, fontSizes, spacing } from '@/theme';
-import { Peran } from '@/types/siprak';
+
+const QUICK_DEMO_ACCOUNTS = [
+  {
+    label: 'Asisten Kelas A',
+    name: 'Budi Santoso, S.Kom.',
+    email: 'asisten@siprak.ac.id',
+    password: 'password123',
+  },
+  {
+    label: 'Praktikan Kelas A',
+    name: 'Ahmad Fauzi (220101001)',
+    email: 'ahmad@siprak.ac.id',
+    password: 'password123',
+  },
+  {
+    label: 'Praktikan 2 Kelas A',
+    name: 'Bella Septiani (220101002)',
+    email: 'bella@siprak.ac.id',
+    password: 'password123',
+  },
+  {
+    label: 'Asisten Kelas B',
+    name: 'Siti Aminah, M.Kom.',
+    email: 'asisten2@siprak.ac.id',
+    password: 'password123',
+  },
+];
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { currentUser, praktikanList, login } = useSiprakContext();
+  const {
+    currentUser,
+    authStatus,
+    authError,
+    isAuthenticating,
+    loginWithEmail,
+    clearAuthError,
+  } = useSiprakContext();
 
-  const [selectedRole, setSelectedRole] = useState<Peran>('praktikan');
-  const [selectedUserId, setSelectedUserId] = useState<string>('');
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
 
-  // Arahkan otomatis jika pengguna sudah memiliki sesi login aktif
+  // Redirect otomatis berdasarkan status autentikasi & role dari Firestore (FR-S2-02, FR-S2-03, FR-S2-04)
   useEffect(() => {
-    if (currentUser) {
+    if (authStatus === 'authenticated' && currentUser) {
       if (currentUser.peran === 'asisten') {
         router.replace('/asisten');
       } else if (currentUser.peran === 'praktikan') {
         router.replace('/praktikan');
       }
+    } else if (
+      authStatus === 'profile-pending' ||
+      authStatus === 'profile-error'
+    ) {
+      router.replace('/account-pending');
     }
-  }, [currentUser, router]);
+  }, [authStatus, currentUser, router]);
 
-  // Mengganti peran mereset pilihan identitas
-  const handleSelectRole = (role: Peran) => {
-    if (role !== selectedRole) {
-      setSelectedRole(role);
-      setSelectedUserId('');
-    }
+  // Saat bootstrap sesi awal Firebase Auth belum selesai, tampilkan loading (SRS Bab 5.1)
+  if (authStatus === 'initializing') {
+    return (
+      <ScreenContainer>
+        <LoadingState
+          fullScreen
+          title="Memeriksa Sesi Login..."
+          description="Memulihkan status autentikasi Firebase dan memuat profil pengguna."
+        />
+      </ScreenContainer>
+    );
+  }
+
+  const handleEmailChange = (value: string) => {
+    setEmail(value);
+    if (authError) clearAuthError();
   };
 
-  const handleLogin = () => {
-    if (!selectedUserId) return;
-    login(selectedUserId);
-    // Navigasi dilakukan oleh useEffect di atas setelah currentUser diperbarui oleh Context
+  const handlePasswordChange = (value: string) => {
+    setPassword(value);
+    if (authError) clearAuthError();
+  };
+
+  const handleFillDemoAccount = (demoEmail: string, demoPass: string) => {
+    setEmail(demoEmail);
+    setPassword(demoPass);
+    if (authError) clearAuthError();
   };
 
   return (
     <ScreenContainer>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}>
-        {/* Header Aplikasi */}
-        <View style={styles.header}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoBadgeText}>S12</Text>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.keyboardView}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}>
+          {/* Header Aplikasi */}
+          <View style={styles.header}>
+            <View style={styles.logoBadge}>
+              <Text style={styles.logoBadgeText}>S12</Text>
+            </View>
+            <Text style={styles.appName}>Siprak-12</Text>
+            <Text style={styles.tagline}>
+              Sistem Informasi Praktikum Terintegrasi
+            </Text>
+            <Text style={styles.description}>
+              Masuk menggunakan akun Firebase Authentication untuk mengakses jadwal,
+              presensi real-time, dan pengajuan izin.
+            </Text>
           </View>
-          <Text style={styles.appName}>Siprak-12</Text>
-          <Text style={styles.tagline}>
-            Sistem Informasi Praktikum Laboratorium Komputer
-          </Text>
-          <Text style={styles.description}>
-            Silakan pilih peran dan identitas simulasi untuk memulai demonstrasi
-            alur praktikum.
-          </Text>
-        </View>
 
-        {/* Tab Pemilihan Peran */}
-        <View style={styles.roleSelector}>
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: selectedRole === 'praktikan' }}
-            style={[
-              styles.roleTab,
-              selectedRole === 'praktikan' && styles.roleTabActive,
-            ]}
-            onPress={() => handleSelectRole('praktikan')}>
-            <Text
-              style={[
-                styles.roleTabText,
-                selectedRole === 'praktikan' && styles.roleTabTextActive,
-              ]}>
-              Praktikan
+          {/* Kartu Form Login */}
+          <View style={styles.formCard}>
+            <Text style={styles.cardTitle}>Masuk ke Akun</Text>
+            <Text style={styles.cardSubtitle}>
+              Peran pengguna (Asisten / Praktikan) ditentukan otomatis dari profil
+              Cloud Firestore Anda.
             </Text>
-          </Pressable>
 
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: selectedRole === 'asisten' }}
-            style={[
-              styles.roleTab,
-              selectedRole === 'asisten' && styles.roleTabActive,
-            ]}
-            onPress={() => handleSelectRole('asisten')}>
-            <Text
-              style={[
-                styles.roleTabText,
-                selectedRole === 'asisten' && styles.roleTabTextActive,
-              ]}>
-              Asisten
-            </Text>
-          </Pressable>
-        </View>
-
-        {/* Pemilihan Identitas Pengguna */}
-        <View style={styles.identitySection}>
-          <Text style={styles.sectionTitle}>
-            Pilih Identitas {selectedRole === 'asisten' ? 'Asisten' : 'Praktikan'}
-          </Text>
-          <Text style={styles.sectionSubtitle}>
-            Ketuk salah satu identitas di bawah ini untuk mengaktifkan tombol Masuk.
-          </Text>
-
-          {selectedRole === 'asisten' ? (
-            <Pressable
-              accessibilityRole="radio"
-              accessibilityState={{
-                selected: selectedUserId === dummyAsisten.id,
+            <AuthForm
+              mode="login"
+              email={email}
+              password={password}
+              onEmailChange={handleEmailChange}
+              onPasswordChange={handlePasswordChange}
+              isSubmitting={isAuthenticating}
+              errorMessage={authError}
+              onSubmit={async (input) => {
+                await loginWithEmail(input);
               }}
-              style={[
-                styles.userCard,
-                selectedUserId === dummyAsisten.id && styles.userCardSelected,
-              ]}
-              onPress={() => setSelectedUserId(dummyAsisten.id)}>
-              <View style={styles.userIconCircle}>
-                <Text style={styles.userIconText}>A</Text>
-              </View>
-              <View style={styles.userInfo}>
-                <Text style={styles.userName}>{dummyAsisten.nama}</Text>
-                <Text style={styles.userDetails}>
-                  Asisten Laboratorium Komputer
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.radioButton,
-                  selectedUserId === dummyAsisten.id &&
-                    styles.radioButtonSelected,
-                ]}
-              />
-            </Pressable>
-          ) : (
-            <View style={styles.userList}>
-              {praktikanList.map((praktikan) => {
-                const isSelected = selectedUserId === praktikan.id;
+            />
+
+            {/* Tautan Registrasi */}
+            <View style={styles.registerLinkRow}>
+              <Text style={styles.registerPromptText}>
+                Belum memiliki akun praktikan?{' '}
+              </Text>
+              <Link href="/register" asChild>
+                <Pressable accessibilityRole="link" hitSlop={8}>
+                  <Text style={styles.registerLinkText}>Daftar Akun Baru</Text>
+                </Pressable>
+              </Link>
+            </View>
+          </View>
+
+          {/* Panel Pengisian Cepat Akun Uji Sprint 2 */}
+          <View style={styles.demoSection}>
+            <Text style={styles.demoTitle}>
+              Pintasan Kredensial Uji (Demo Sprint 2)
+            </Text>
+            <Text style={styles.demoSubtitle}>
+              Ketuk salah satu akun terdaftar di bawah ini untuk mengisi email dan
+              kata sandi secara cepat saat demonstrasi:
+            </Text>
+            <View style={styles.demoGrid}>
+              {QUICK_DEMO_ACCOUNTS.map((acc) => {
+                const isSelected = email.toLowerCase() === acc.email.toLowerCase();
                 return (
                   <Pressable
-                    key={praktikan.id}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: isSelected }}
+                    key={acc.email}
+                    accessibilityRole="button"
                     style={[
-                      styles.userCard,
-                      isSelected && styles.userCardSelected,
+                      styles.demoChip,
+                      isSelected && styles.demoChipActive,
                     ]}
-                    onPress={() => setSelectedUserId(praktikan.id)}>
-                    <View style={styles.userIconCircle}>
-                      <Text style={styles.userIconText}>
-                        {praktikan.nama.charAt(0)}
-                      </Text>
-                    </View>
-                    <View style={styles.userInfo}>
-                      <Text style={styles.userName}>{praktikan.nama}</Text>
-                      <Text style={styles.userDetails}>
-                        NIM: {praktikan.nim} • Kelas {praktikan.kelas}
-                      </Text>
-                    </View>
-                    <View
+                    onPress={() => handleFillDemoAccount(acc.email, acc.password)}>
+                    <Text
                       style={[
-                        styles.radioButton,
-                        isSelected && styles.radioButtonSelected,
-                      ]}
-                    />
+                        styles.demoChipRole,
+                        isSelected && styles.demoChipRoleActive,
+                      ]}>
+                      {acc.label}
+                    </Text>
+                    <Text style={styles.demoChipName}>{acc.name}</Text>
+                    <Text style={styles.demoChipEmail}>{acc.email}</Text>
                   </Pressable>
                 );
               })}
             </View>
-          )}
-        </View>
-
-        {/* Tombol Aksi Masuk */}
-        <View style={styles.actionSection}>
-          <Button
-            title="Masuk"
-            onPress={handleLogin}
-            disabled={!selectedUserId}
-          />
-        </View>
-
-        {/* Informasi Simulasi */}
-        <View style={styles.simulationNotice}>
-          <Text style={styles.simulationNoticeText}>
-            Catatan: Seluruh data pengguna dan sesi merupakan data simulasi lokal
-            dalam memori untuk Sprint 1. Tidak diperlukan kata sandi.
-          </Text>
-        </View>
-      </ScrollView>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  keyboardView: {
+    flex: 1,
+  },
   scrollContent: {
     paddingBottom: spacing.xxxl,
   },
@@ -245,126 +249,99 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
     marginTop: spacing.xs,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
     lineHeight: 18,
   },
-  roleSelector: {
-    flexDirection: 'row',
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: 12,
-    padding: 4,
-    marginVertical: spacing.md,
+  formCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: spacing.xl,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  roleTab: {
-    flex: 1,
-    paddingVertical: spacing.md,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-  },
-  roleTabActive: {
-    backgroundColor: colors.surface,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  roleTabText: {
-    fontSize: fontSizes.sm,
-    fontWeight: '600',
-    color: colors.muted,
-  },
-  roleTabTextActive: {
-    color: colors.primary,
-    fontWeight: '700',
-  },
-  identitySection: {
-    marginTop: spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: fontSizes.md,
+  cardTitle: {
+    fontSize: fontSizes.lg,
     fontWeight: '700',
     color: colors.text,
   },
-  sectionSubtitle: {
+  cardSubtitle: {
+    fontSize: fontSizes.xs,
+    color: colors.muted,
+    marginTop: 4,
+    marginBottom: spacing.lg,
+    lineHeight: 18,
+  },
+  registerLinkRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginTop: spacing.lg,
+    minHeight: 44,
+  },
+  registerPromptText: {
+    fontSize: fontSizes.xs,
+    color: colors.textSecondary,
+  },
+  registerLinkText: {
+    fontSize: fontSizes.xs,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  demoSection: {
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  demoTitle: {
+    fontSize: fontSizes.xs,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  demoSubtitle: {
     fontSize: fontSizes.xs,
     color: colors.muted,
     marginTop: 2,
     marginBottom: spacing.md,
+    lineHeight: 17,
   },
-  userList: {
+  demoGrid: {
     gap: spacing.sm,
   },
-  userCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  demoChip: {
     backgroundColor: colors.surface,
-    borderRadius: 12,
+    borderRadius: 10,
     padding: spacing.md,
     borderWidth: 1.5,
     borderColor: colors.border,
-    minHeight: 64,
+    minHeight: 54,
   },
-  userCardSelected: {
+  demoChipActive: {
     borderColor: colors.primary,
-    backgroundColor: '#F0F6FF',
+    backgroundColor: '#EFF6FF',
   },
-  userIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: spacing.md,
-  },
-  userIconText: {
-    fontSize: fontSizes.md,
+  demoChipRole: {
+    fontSize: 11,
     fontWeight: '700',
     color: colors.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
-  userInfo: {
-    flex: 1,
+  demoChipRoleActive: {
+    color: colors.primaryDark,
   },
-  userName: {
+  demoChipName: {
     fontSize: fontSizes.sm,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.text,
-  },
-  userDetails: {
-    fontSize: fontSizes.xs,
-    color: colors.muted,
     marginTop: 2,
   },
-  radioButton: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: colors.border,
-    marginLeft: spacing.sm,
-  },
-  radioButtonSelected: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary,
-  },
-  actionSection: {
-    marginTop: spacing.xl,
-  },
-  simulationNotice: {
-    marginTop: spacing.lg,
-    padding: spacing.md,
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: 8,
-  },
-  simulationNoticeText: {
+  demoChipEmail: {
     fontSize: fontSizes.xs,
     color: colors.muted,
-    textAlign: 'center',
-    lineHeight: 18,
+    marginTop: 1,
   },
 });
