@@ -18,8 +18,9 @@ export default function ProfileView() {
 
   const handleConfirmLogout = () => {
     setModalVisible(false);
-    logout();
-    router.replace('/');
+    void logout().then(() => router.replace('/')).catch(() => {
+      // Error autentikasi ditangani oleh SiprakContext.
+    });
   };
 
   const isAsisten = currentUser.peran === 'asisten';
@@ -43,6 +44,13 @@ export default function ProfileView() {
         <View style={styles.infoDivider} />
 
         <View style={styles.infoSection}>
+          {currentUser.email ? (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Email</Text>
+              <Text style={styles.infoValue}>{currentUser.email}</Text>
+            </View>
+          ) : null}
+
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>ID Pengguna</Text>
             <Text style={styles.infoValue}>{currentUser.id}</Text>
@@ -64,17 +72,17 @@ export default function ProfileView() {
         </View>
 
         <View style={styles.simulationNotice}>
-          <Text style={styles.simulationTitle}>Informasi Data Simulasi</Text>
+          <Text style={styles.simulationTitle}>Akun Firebase</Text>
           <Text style={styles.simulationText}>
-            Aplikasi Siprak-12 Sprint 1 berjalan dalam mode in-memory lokal tanpa
-            database backend. Pergantian peran tidak akan mereset data sesi atau
-            presensi yang sudah dibuat.
+            Identitas akun dan peran dibaca dari Firebase Authentication dan profil Cloud
+            Firestore. Jika peran atau status akun perlu diubah, hubungi pengelola
+            praktikum; perubahan peran tidak tersedia dari aplikasi.
           </Text>
         </View>
 
         <View style={styles.actionContainer}>
           <Button
-            title="Ganti Peran"
+            title="Keluar dari Akun"
             variant="secondary"
             onPress={() => setModalVisible(true)}
           />
@@ -83,9 +91,9 @@ export default function ProfileView() {
 
       <ConfirmModal
         visible={modalVisible}
-        title="Konfirmasi Ganti Peran"
-        message="Apakah Anda yakin ingin keluar dan mengganti peran? Data sesi dan presensi akan tetap tersimpan selama aplikasi masih aktif."
-        confirmText="Ya, Ganti Peran"
+        title="Konfirmasi Keluar"
+        message="Apakah Anda yakin ingin keluar dari akun Siprak-12 pada perangkat ini?"
+        confirmText="Ya, Keluar"
         cancelText="Batal"
         onConfirm={handleConfirmLogout}
         onCancel={() => setModalVisible(false)}

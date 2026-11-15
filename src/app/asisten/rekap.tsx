@@ -1,17 +1,16 @@
-﻿import React from 'react';
+﻿import { useSiprakContext } from '@/context/SiprakContext';
+import { Sesi } from '@/types/siprak';
+import { router } from 'expo-router';
 import {
-  Platform,
-  View,
-  Text,
-  StyleSheet,
   FlatList,
-  TouchableOpacity,
+  Platform,
   SafeAreaView,
   StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { router } from 'expo-router';
-import { useSiprakContext } from '@/context/SiprakContext';
-import { Sesi } from '@/types/siprak';
 
 export default function RekapTabScreen() {
   const { sessions, attendances, praktikanList } = useSiprakContext();
@@ -98,7 +97,7 @@ export default function RekapTabScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
+      <StatusBar barStyle="dark-content" />
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.pageTitle}>Rekapitulasi Kehadiran</Text>
