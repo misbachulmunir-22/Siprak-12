@@ -1,22 +1,20 @@
+
 /**
  * Inisialisasi Firebase untuk Siprak-12.
- * Menggunakan project Firebase yang sudah ditetapkan pada baseline main.
- *
- * React Native Auth menggunakan AsyncStorage agar status login pulih
- * setelah aplikasi ditutup/dibuka kembali (SRS FR-S2-03).
+ * Web memakai browserLocalPersistence; Android/iOS memakai AsyncStorage.
  */
 import { getApp, getApps, initializeApp } from 'firebase/app';
 
-
 import {
+  browserLocalPersistence,
   getAuth,
   getReactNativePersistence,
   initializeAuth,
 } from 'firebase/auth';
 
 import * as AsyncStorageModule from '@react-native-async-storage/async-storage';
-
 import { getFirestore } from 'firebase/firestore';
+import { Platform } from 'react-native';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyAReSe8o7NaWgyAUe_tCooN6uTLbuVrQ-A',
@@ -44,30 +42,40 @@ type AsyncStorageModuleShape = {
   removeItem?: AsyncStorageLike['removeItem'];
 };
 
-// Mendukung API AsyncStorage v2 (default export) dan v3 (createAsyncStorage).
 const storageModule = AsyncStorageModule as unknown as AsyncStorageModuleShape;
+
 const authStorage: AsyncStorageLike =
   storageModule.createAsyncStorage?.('siprak12-auth') ??
   storageModule.default ??
   (storageModule as unknown as AsyncStorageLike);
 
+function isAlreadyInitialized(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: string }).code === 'auth/already-initialized'
+  );
+}
+
 function createPersistentAuth() {
   try {
+    if (Platform.OS === 'web') {
+      return initializeAuth(app, {
+        persistence: browserLocalPersistence,
+      });
+    }
+
     return initializeAuth(app, {
       persistence: getReactNativePersistence(
         authStorage as Parameters<typeof getReactNativePersistence>[0]
       ),
     });
   } catch (error) {
-    // Fast Refresh dapat menjalankan modul ini kembali setelah Auth terinisialisasi.
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: string }).code === 'auth/already-initialized'
-    ) {
+    if (isAlreadyInitialized(error)) {
       return getAuth(app);
     }
+
     throw error;
   }
 }

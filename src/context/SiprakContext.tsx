@@ -1,25 +1,30 @@
-import React, {
+import {
+  dummyAttendances,
+  dummyPraktikanList,
+  dummySessions,
+} from '@/data/dummy';
+import { authService, formatAuthError } from '@/services/authService';
+import { userService } from '@/services/userService';
+import {
+  AuthActionResult,
+  AuthStatus,
+  LoginInput,
+  Pengguna,
+  Presensi,
+  RegisterInput,
+  Sesi,
+  SiprakContextValue,
+  StatusSesi,
+} from '@/types/siprak';
+import {
   createContext,
   useCallback,
   useContext,
   useEffect,
   useRef,
   useState,
-  ReactNode,
+  type ReactNode,
 } from 'react';
-import {
-  Pengguna,
-  Presensi,
-  Sesi,
-  SiprakContextValue,
-  StatusSesi,
-} from '@/types/siprak';
-import {
-  dummyAsisten,
-  dummyAttendances,
-  dummyPraktikanList,
-  dummySessions,
-} from '@/data/dummy';
 
 const SiprakContext = createContext<SiprakContextValue | null>(null);
 
@@ -28,20 +33,25 @@ export interface SiprakProviderProps {
 }
 
 export function SiprakProvider({ children }: SiprakProviderProps) {
-  // A. currentUser awal null
   const [currentUser, setCurrentUser] = useState<Pengguna | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('initializing');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+
+  // Data kompatibilitas Sprint 1 dipertahankan agar layar lama tidak rusak.
+  // Modul Sprint 2 tetap memakai service Firestore masing-masing.
   const [sessions, setSessions] = useState<Sesi[]>(() => [...dummySessions]);
   const [attendances, setAttendances] = useState<Presensi[]>(() => [
     ...dummyAttendances,
   ]);
-  const [praktikanList] = useState<Pengguna[]>(() => [
-    ...dummyPraktikanList,
-  ]);
+  const [praktikanList] = useState<Pengguna[]>(() => [...dummyPraktikanList]);
 
-  // Synchronized refs to allow synchronous reads and prevent double-tap race conditions
   const currentUserRef = useRef<Pengguna | null>(currentUser);
   const sessionsRef = useRef<Sesi[]>(sessions);
   const attendancesRef = useRef<Presensi[]>(attendances);
+  const profileUnsubscribeRef = useRef<(() => void) | null>(null);
+  const isRegisteringRef = useRef(false);
+  const cleanupListenersRef = useRef<Set<() => void>>(new Set());
 
   useEffect(() => {
     currentUserRef.current = currentUser;
@@ -55,163 +65,299 @@ export function SiprakProvider({ children }: SiprakProviderProps) {
     attendancesRef.current = attendances;
   }, [attendances]);
 
-  // B. login(userId)
-  const login = useCallback(
-    (userId: string): void => {
-      if (dummyAsisten.id === userId) {
-        setCurrentUser(dummyAsisten);
-        currentUserRef.current = dummyAsisten;
-        return;
-      }
-      const praktikan = praktikanList.find((p) => p.id === userId);
-      if (praktikan) {
-        setCurrentUser(praktikan);
-        currentUserRef.current = praktikan;
-      }
-    },
-    [praktikanList]
-  );
+  const cleanupPrivateListeners = useCallback(() => {
+    profileUnsubscribeRef.current?.();
+    profileUnsubscribeRef.current = null;
 
-  // C. logout()
-  const logout = useCallback((): void => {
-    setCurrentUser(null);
-    currentUserRef.current = null;
+    cleanupListenersRef.current.forEach((unsubscribe) => {
+      try {
+        unsubscribe();
+      } catch {
+        // Satu listener gagal dibersihkan tidak boleh menghentikan cleanup lain.
+      }
+    });
+    cleanupListenersRef.current.clear();
   }, []);
 
-  // D. openSession(sesiId)
-  const openSession = useCallback((sesiId: string): void => {
-    const user = currentUserRef.current;
-    if (!user || user.peran !== 'asisten') {
-      return;
-    }
+  const clearPrivateState = useCallback(() => {
+    cleanupPrivateListeners();
+    setCurrentUser(null);
+    currentUserRef.current = null;
+  }, [cleanupPrivateListeners]);
 
-    const targetSession = sessionsRef.current.find((s) => s.id === sesiId);
-    if (!targetSession || targetSession.status !== 'belum_dibuka') {
-      return;
-    }
+  // Pulihkan sesi Firebase dan dengarkan profil/role dari users/{uid}.
+  useEffect(() => {
+    const unsubscribeAuth = authService.subscribeAuthState((firebaseUser) => {
+      profileUnsubscribeRef.current?.();
+      profileUnsubscribeRef.current = null;
+      setCurrentUser(null);
+      currentUserRef.current = null;
+      setAuthError(null);
 
-    const now = new Date().toISOString();
-    const updatedSessions = sessionsRef.current.map((s) => {
-      if (s.id === sesiId && s.status === 'belum_dibuka') {
-        return {
-          ...s,
-          status: 'dibuka' as StatusSesi,
-          dibukaPada: s.dibukaPada ?? now,
-        };
+      if (!firebaseUser) {
+        clearPrivateState();
+        setAuthStatus('unauthenticated');
+        return;
       }
-      return s;
+
+      setAuthStatus('initializing');
+      profileUnsubscribeRef.current = userService.subscribeUserProfile(
+        firebaseUser.uid,
+        (profile) => {
+          if (!profile) {
+            // Observer Auth bisa berjalan sebelum dokumen profil registrasi dibuat.
+            if (isRegisteringRef.current) {
+              setAuthStatus('initializing');
+              return;
+            }
+            setCurrentUser(null);
+            currentUserRef.current = null;
+            setAuthStatus('profile-pending');
+            setAuthError(
+              'Profil users/{uid} belum tersedia. Hubungi pengelola praktikum untuk pemeriksaan akun.'
+            );
+            return;
+          }
+
+          setCurrentUser(profile);
+          currentUserRef.current = profile;
+          if (profile.aktif !== true) {
+            setAuthStatus('profile-pending');
+            setAuthError(
+              'Akun Anda belum aktif. Hubungi pengelola praktikum untuk aktivasi.'
+            );
+            return;
+          }
+
+          setAuthError(null);
+          setAuthStatus('authenticated');
+        },
+        (error) => {
+          setCurrentUser(null);
+          currentUserRef.current = null;
+          setAuthStatus('profile-error');
+          setAuthError(formatAuthError(error));
+        }
+      );
     });
 
+    return () => {
+      unsubscribeAuth();
+      cleanupPrivateListeners();
+    };
+  }, [clearPrivateState, cleanupPrivateListeners]);
+
+  const loginWithEmail = useCallback(
+    async (input: LoginInput): Promise<AuthActionResult> => {
+      setIsAuthenticating(true);
+      setAuthError(null);
+      try {
+        await authService.login(input);
+        // onAuthStateChanged akan memuat profil dan role dari Firestore.
+        return { ok: true };
+      } catch (error) {
+        const message = formatAuthError(error);
+        setAuthError(message);
+        return { ok: false, error: message };
+      } finally {
+        setIsAuthenticating(false);
+      }
+    },
+    []
+  );
+
+  const registerAccount = useCallback(
+    async (input: RegisterInput): Promise<AuthActionResult> => {
+      setIsAuthenticating(true);
+      isRegisteringRef.current = true;
+      setAuthError(null);
+      try {
+        await authService.register(input);
+        return { ok: true };
+      } catch (error) {
+        const message = formatAuthError(error);
+        setAuthError(message);
+        return { ok: false, error: message };
+      } finally {
+        isRegisteringRef.current = false;
+        setIsAuthenticating(false);
+      }
+    },
+    []
+  );
+
+  const refreshProfile = useCallback(async (): Promise<void> => {
+    const firebaseUser = authService.getCurrentAuthUser();
+    if (!firebaseUser) {
+      setCurrentUser(null);
+      currentUserRef.current = null;
+      setAuthStatus('unauthenticated');
+      return;
+    }
+
+    setAuthStatus('initializing');
+    setAuthError(null);
+    setIsAuthenticating(true);
+    try {
+      const profile = await userService.refreshOwnProfile(firebaseUser.uid);
+      if (!profile) {
+        setCurrentUser(null);
+        currentUserRef.current = null;
+        setAuthStatus('profile-pending');
+        setAuthError('Profil pengguna belum ditemukan di Cloud Firestore.');
+        return;
+      }
+
+      setCurrentUser(profile);
+      currentUserRef.current = profile;
+      if (profile.aktif !== true) {
+        setAuthStatus('profile-pending');
+        setAuthError('Akun Anda belum aktif. Hubungi pengelola praktikum.');
+        return;
+      }
+
+      setAuthError(null);
+      setAuthStatus('authenticated');
+    } catch (error) {
+      setAuthStatus('profile-error');
+      setAuthError(formatAuthError(error));
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }, []);
+
+  const clearAuthError = useCallback(() => setAuthError(null), []);
+
+  const registerCleanupListener = useCallback((unsubscribe: () => void) => {
+    cleanupListenersRef.current.add(unsubscribe);
+    return () => {
+      cleanupListenersRef.current.delete(unsubscribe);
+      unsubscribe();
+    };
+  }, []);
+
+  const login = useCallback((_userId: string): void => {
+    setAuthError('Gunakan login email dan kata sandi Firebase.');
+  }, []);
+
+  const logout = useCallback(async (): Promise<void> => {
+    try {
+      await authService.logout();
+      clearPrivateState();
+      setAuthError(null);
+      setAuthStatus('unauthenticated');
+    } catch (error) {
+      const message = formatAuthError(error);
+      setAuthError(message);
+      throw error;
+    }
+  }, [clearPrivateState]);
+
+  const openSession = useCallback((sesiId: string): void => {
+    const user = currentUserRef.current;
+    if (!user || user.peran !== 'asisten') return;
+
+    const targetSession = sessionsRef.current.find((s) => s.id === sesiId);
+    if (!targetSession || targetSession.status !== 'belum_dibuka') return;
+
+    const now = new Date().toISOString();
+    const updatedSessions = sessionsRef.current.map((s) =>
+      s.id === sesiId && s.status === 'belum_dibuka'
+        ? { ...s, status: 'dibuka' as StatusSesi, dibukaPada: s.dibukaPada ?? now }
+        : s
+    );
     sessionsRef.current = updatedSessions;
     setSessions(updatedSessions);
   }, []);
 
-  // E. closeSession(sesiId, catatan?)
   const closeSession = useCallback((sesiId: string, catatan?: string): void => {
     const user = currentUserRef.current;
-    if (!user || user.peran !== 'asisten') {
-      return;
-    }
+    if (!user || user.peran !== 'asisten') return;
 
     const targetSession = sessionsRef.current.find((s) => s.id === sesiId);
-    if (!targetSession || targetSession.status !== 'dibuka') {
-      return;
-    }
+    if (!targetSession || targetSession.status !== 'dibuka') return;
 
     const now = new Date().toISOString();
     const trimmedCatatan = catatan?.trim();
-
-    const updatedSessions = sessionsRef.current.map((s) => {
-      if (s.id === sesiId && s.status === 'dibuka') {
-        return {
-          ...s,
-          status: 'ditutup' as StatusSesi,
-          ditutupPada: s.ditutupPada ?? now,
-          catatanPenutup: trimmedCatatan ? trimmedCatatan : s.catatanPenutup,
-        };
-      }
-      return s;
-    });
-
+    const updatedSessions = sessionsRef.current.map((s) =>
+      s.id === sesiId && s.status === 'dibuka'
+        ? {
+            ...s,
+            status: 'ditutup' as StatusSesi,
+            ditutupPada: s.ditutupPada ?? now,
+            catatanPenutup: trimmedCatatan ? trimmedCatatan : s.catatanPenutup,
+          }
+        : s
+    );
     sessionsRef.current = updatedSessions;
     setSessions(updatedSessions);
   }, []);
 
-  // F. checkIn(sesiId)
   const checkIn = useCallback(
-    (
-      sesiId: string
-    ): {
+    (sesiId: string): {
       ok: boolean;
       reason?: 'belum_dibuka' | 'ditutup' | 'sudah_presensi';
     } => {
       const user = currentUserRef.current;
-      if (!user || user.peran !== 'praktikan') {
-        return { ok: false };
-      }
+      if (!user || user.peran !== 'praktikan') return { ok: false };
 
       const targetSession = sessionsRef.current.find((s) => s.id === sesiId);
-      if (!targetSession) {
-        return { ok: false };
-      }
-
-      // Praktikan harus memiliki kelas yang sama dengan sesi
-      if (!user.kelas || user.kelas !== targetSession.kelas) {
-        return { ok: false };
-      }
-
-      // Sesi belum dibuka
+      if (!targetSession) return { ok: false };
+      if (!user.kelas || user.kelas !== targetSession.kelas) return { ok: false };
       if (targetSession.status === 'belum_dibuka') {
         return { ok: false, reason: 'belum_dibuka' };
       }
-
-      // Sesi ditutup
       if (targetSession.status === 'ditutup') {
         return { ok: false, reason: 'ditutup' };
       }
 
-      // Presensi sudah ada pada pasangan sesiId + praktikanId
-      // Memeriksa attendancesRef.current secara sinkron untuk memblokir ketukan cepat
       const isAlreadyCheckedIn = attendancesRef.current.some(
         (att) => att.sesiId === sesiId && att.praktikanId === user.id
       );
-      if (isAlreadyCheckedIn) {
-        return { ok: false, reason: 'sudah_presensi' };
-      }
+      if (isAlreadyCheckedIn) return { ok: false, reason: 'sudah_presensi' };
 
       const newPresensi: Presensi = {
         id: `presensi-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         sesiId,
         praktikanId: user.id,
+        praktikanUid: user.id,
         waktuHadir: new Date().toISOString(),
       };
-
-      // Perbarui ref segera agar panggilan cepat berikutnya langsung melihat presensi baru
-      attendancesRef.current = [...attendancesRef.current, newPresensi];
-      setAttendances(attendancesRef.current);
-
+      const updatedAttendances = [...attendancesRef.current, newPresensi];
+      attendancesRef.current = updatedAttendances;
+      setAttendances(updatedAttendances);
       return { ok: true };
     },
     []
   );
 
-  // G. getAttendance(sesiId)
-  const getAttendance = useCallback((sesiId: string): Presensi[] => {
-    return attendancesRef.current.filter((a) => a.sesiId === sesiId);
-  }, []);
+  const getAttendance = useCallback(
+    (sesiId: string): Presensi[] =>
+      attendancesRef.current.filter((attendance) => attendance.sesiId === sesiId),
+    []
+  );
 
-  // H. getUserAttendance(userId)
-  const getUserAttendance = useCallback((userId: string): Presensi[] => {
-    return attendancesRef.current.filter((a) => a.praktikanId === userId);
-  }, []);
+  const getUserAttendance = useCallback(
+    (userId: string): Presensi[] =>
+      attendancesRef.current.filter((attendance) => attendance.praktikanId === userId),
+    []
+  );
 
   const value: SiprakContextValue = {
     currentUser,
+    authStatus,
+    authError,
+    isAuthenticating,
+    loginWithEmail,
+    registerAccount,
+    refreshProfile,
+    clearAuthError,
+    registerCleanupListener,
+    logout,
     sessions,
     attendances,
     praktikanList,
     login,
-    logout,
     openSession,
     closeSession,
     checkIn,
@@ -219,9 +365,7 @@ export function SiprakProvider({ children }: SiprakProviderProps) {
     getUserAttendance,
   };
 
-  return (
-    <SiprakContext.Provider value={value}>{children}</SiprakContext.Provider>
-  );
+  return <SiprakContext.Provider value={value}>{children}</SiprakContext.Provider>;
 }
 
 export function useSiprakContext(): SiprakContextValue {
