@@ -1,27 +1,18 @@
 import React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { Redirect, Tabs } from 'expo-router';
 import { useSiprakContext } from '@/context/SiprakContext';
 import { colors } from '@/theme';
-import { Redirect, Tabs } from 'expo-router';
 
 export default function AsistenLayout() {
-  const { currentUser, authStatus } = useSiprakContext();
+  const { currentUser } = useSiprakContext();
 
-  if (authStatus === 'initializing') {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}>
-        <ActivityIndicator color={colors.primary} size="large" />
-      </View>
-    );
-  }
-  if (authStatus === 'profile-pending' || authStatus === 'profile-error') {
-    return <Redirect href="/account-pending" />;
-  }
-  if (authStatus !== 'authenticated' || !currentUser) {
+  // Route guard: hanya pengguna yang sudah login dengan peran asisten yang diizinkan
+  if (!currentUser) {
     return <Redirect href="/" />;
   }
+
   if (currentUser.peran !== 'asisten') {
-    return <Redirect href="/praktikan" />;
+    return <Redirect href="/" />;
   }
 
   return (
@@ -33,11 +24,32 @@ export default function AsistenLayout() {
         headerTitleStyle: { color: colors.text, fontWeight: '700' },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.muted,
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        tabBarStyle: {
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
+        },
       }}>
-      <Tabs.Screen name="index" options={{ title: 'Jadwal', headerShown: false }} />
-      <Tabs.Screen name="rekap" options={{ title: 'Rekap', headerTitle: 'Rekap Presensi' }} />
-      <Tabs.Screen name="profil" options={{ title: 'Profil', headerTitle: 'Profil Asisten' }} />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Jadwal',
+          headerTitle: 'Jadwal Praktikum',
+        }}
+      />
+      <Tabs.Screen
+        name="rekap"
+        options={{
+          title: 'Rekap',
+          headerTitle: 'Rekap Presensi',
+        }}
+      />
+      <Tabs.Screen
+        name="profil"
+        options={{
+          title: 'Profil',
+          headerTitle: 'Profil Asisten',
+        }}
+      />
     </Tabs>
   );
 }

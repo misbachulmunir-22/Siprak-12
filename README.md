@@ -1,56 +1,49 @@
-# Welcome to your Expo app 👋
+# Siprak-12 — Sistem Informasi Praktikum
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Prototipe Sprint 1 untuk alur presensi praktikum asisten dan praktikan. Pada Sprint 1, data disimpan dalam state aplikasi dan belum memakai database, backend, atau autentikasi sungguhan.
 
-## Get started
+## Lingkup Programmer 4
 
-1. Install dependencies
+Berkas yang menjadi tanggung jawab Programmer 4 pada paket ini:
 
-   ```bash
-   npm install
-   ```
+- `src/components/PraktikanPresensiAction.tsx` — konfirmasi presensi, status sesi, dan pencegahan presensi ganda pada UI.
+- `src/components/PresensiSuccessSheet.tsx` — bottom sheet sukses dengan waktu yang benar-benar tercatat di Context.
+- `src/app/praktikan/riwayat.tsx` — riwayat kelas praktikan, status Hadir/Belum hadir/Belum dimulai, total kehadiran, serta empty state.
+- `src/utils/presensi.ts` — helper format tanggal/jam, urutan sesi, pencarian presensi, dan penentuan status riwayat.
 
-2. Start the app
+Programmer 4 tidak mengubah `SiprakContext`, tipe bersama, tema global, layout tab, halaman masuk, halaman jadwal/detail sesi, maupun modul asisten.
 
-   ```bash
-   npx expo start
-   ```
+## Persyaratan dan perintah pemeriksaan
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+Gunakan Node.js/npm sesuai versi proyek yang disepakati tim. Dari akar repositori:
 
 ```bash
-npm run reset-project
+npm install
+npx tsc --noEmit
+npx expo-doctor
 ```
 
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
+Proyek dalam SRS menggunakan Expo development build (bukan Expo Go):
 
-### Other setup steps
+```bash
+npx expo start --dev-client
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Untuk membuat APK development, login ke Expo lalu jalankan:
 
-## Learn more
+```bash
+npx eas-cli login
+npx eas-cli build --platform android --profile development
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Pastikan profil `development` dalam `eas.json` disiapkan Programmer 1 sesuai konfigurasi tim.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Kontrak integrasi yang digunakan paket ini
 
-## Join the community
+Paket ini mengikuti API Context yang tersedia dalam ZIP `feat/modul-asisten-jeje` yang diberikan untuk integrasi:
 
-Join our community of developers creating universal apps.
+- `useSiprakContext()` dari `@/context/SiprakContext`.
+- Tipe `PraktikanPresensiActionProps`, `Sesi`, `Presensi`, dan `StatusRiwayat` dari `@/types/siprak`.
+- Context menyediakan `currentUser`, `sessions`, `attendances`, `checkIn(sesiId)`, dan `getUserAttendance(userId)`.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Jangan menyalin berkas Context atau tipe bersama dari paket ini, karena memang tidak disertakan: keduanya bukan berkas milik Programmer 4. Integrasikan setelah kontrak tersebut masuk ke branch integrasi. Programmer 2 perlu memasang komponen aksi ini di detail sesi dan mendaftarkan rute riwayat lewat layout praktikan.

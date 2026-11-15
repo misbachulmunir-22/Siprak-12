@@ -1,533 +1,177 @@
-﻿import { RekapItem } from '@/components/RekapItem';
-import { useSiprakContext } from '@/context/SiprakContext';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import {
-  FlatList,
-  Platform,
-  SafeAreaView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { useSiprakContext } from '@/context/SiprakContext';
+import type { Sesi } from '@/types/siprak';
+import { subscribeSession } from '@/services/sessionService';
+import { subscribeSessionAttendance, type AttendanceRosterItem } from '@/services/attendanceReadService';
+
+const EMPTY_ROSTER: AttendanceRosterItem[] = [];
 
 export default function DetailRekapScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const { sessions, attendances, praktikanList } = useSiprakContext();
+  const params = useLocalSearchParams<{ id: string }>();
+  const sessionId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const { currentUser } = useSiprakContext();
+  const [sessionResult, setSessionResult] = useState<{ key: string; session: Sesi | null; error: string | null } | null>(null);
+  const [rosterResult, setRosterResult] = useState<{ key: string; roster: AttendanceRosterItem[]; error: string | null } | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
+  const sessionKey = `${sessionId ?? ''}:${retryKey}`;
 
-  const sesi = sessions.find((s) => s.id === id);
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+    return subscribeSession(sessionId, (item) => {
+      setSessionResult({ key: sessionKey, session: item, error: item ? null : 'Sesi tidak ditemukan atau kamu tidak memiliki akses ke kelas ini.' });
+    }, (error) => {
+      const message = error.message.includes('permission-denied')
+        ? 'Akun ini tidak berwenang melihat sesi tersebut.'
+        : 'Detail sesi gagal dimuat. Periksa koneksi lalu coba lagi.';
+      setSessionResult({ key: sessionKey, session: null, error: message });
+    });
+  }, [sessionId, retryKey, sessionKey]);
 
-  if (!sesi) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorTitle}>Sesi Tidak Ditemukan</Text>
-          <Text style={styles.errorSubtitle}>
-            Data sesi praktikum yang dicari tidak tersedia atau telah dihapus.
-          </Text>
-          <TouchableOpacity
-            style={styles.btnKembali}
-            onPress={() => router.back()}
-          >
-            <Text style={styles.btnKembaliText}>Kembali ke Halaman Sebelumnya</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
+  const currentSessionResult = sessionResult?.key === sessionKey ? sessionResult : null;
+  const session = currentSessionResult?.session ?? null;
+  const sessionLoading = Boolean(sessionId) && currentSessionResult === null;
+  const sessionError = currentSessionResult?.error ?? (sessionId ? null : 'ID sesi tidak tersedia. Kembali ke daftar rekap dan pilih sesi.');
+  const rosterKey = `${session?.id ?? ''}:${session?.classId ?? ''}:${retryKey}`;
+
+  useEffect(() => {
+    if (!session?.classId) {
+      return;
+    }
+    return subscribeSessionAttendance(session.id, session.classId, (items) => {
+      setRosterResult({ key: rosterKey, roster: items, error: null });
+    }, (error) => {
+      const message = error.message.includes('permission-denied')
+        ? 'Tidak memiliki akses ke peserta kelas ini.'
+        : 'Rekap gagal dimuat. Periksa koneksi lalu coba lagi.';
+      setRosterResult({ key: rosterKey, roster: [], error: message });
+    });
+  }, [rosterKey, retryKey, session?.classId, session?.id]);
+
+  const currentRosterResult = rosterResult?.key === rosterKey ? rosterResult : null;
+  const roster = currentRosterResult?.roster ?? EMPTY_ROSTER;
+  const rosterLoading = Boolean(session?.classId) && currentRosterResult === null;
+  const rosterError = currentRosterResult?.error ?? null;
+  const attendedCount = useMemo(() => roster.filter((item) => item.presensi !== null).length, [roster]);
+
+  if (!currentUser || currentUser.peran !== 'asisten') {
+    return <Notice title="Akses asisten diperlukan" description="Masuk menggunakan akun asisten yang ditugaskan pada kelas ini." />;
   }
 
-  const isBelumDibuka = sesi.status === 'belum_dibuka';
-  const isDibuka = sesi.status === 'dibuka';
-  const isDitutup = sesi.status === 'ditutup';
-
-  const sesiAttendances = attendances.filter((a) => a.sesiId === sesi.id);
-
-  // Daftar data praktikan dengan status kehadirannya pada sesi ini
-  const rekapData = praktikanList.map((praktikan, index) => {
-    const matched = sesiAttendances.find((a) => a.praktikanId === praktikan.id);
-    return {
-      nomor: index + 1,
-      id: praktikan.id,
-      nama: praktikan.nama,
-      nim: praktikan.nim,
-      status: matched ? ('hadir' as const) : ('belum_hadir' as const),
-      waktuHadir: matched ? matched.waktuHadir : undefined,
-    };
-  });
-
-  const totalPraktikan = praktikanList.length;
-  const jumlahHadir = sesiAttendances.length;
-  const jumlahBelumHadir = Math.max(0, totalPraktikan - jumlahHadir);
-
-  const formatWaktu = (isoString?: string) => {
-    if (!isoString) return '-';
-    try {
-      const d = new Date(isoString);
-      const jam = String(d.getHours()).padStart(2, '0');
-      const menit = String(d.getMinutes()).padStart(2, '0');
-      return `${jam}:${menit} WIB`;
-    } catch {
-      return isoString;
-    }
-  };
-
-  const renderHeader = () => (
-    <View style={styles.headerComponent}>
-      {/* Kartu Ringkasan Sesi */}
-      <View style={styles.sesiCard}>
-        <View style={styles.sesiCardTop}>
-          <View style={styles.pertemuanBadge}>
-            <Text style={styles.pertemuanText}>Pertemuan {sesi.pertemuan}</Text>
-          </View>
-          <View
-            style={[
-              styles.statusBadge,
-              isBelumDibuka && styles.statusBadgeBelum,
-              isDibuka && styles.statusBadgeDibuka,
-              isDitutup && styles.statusBadgeDitutup,
-            ]}
-          >
-            <Text
-              style={[
-                styles.statusBadgeText,
-                isBelumDibuka && styles.statusTextBelum,
-                isDibuka && styles.statusTextDibuka,
-                isDitutup && styles.statusTextDitutup,
-              ]}
-            >
-              {isBelumDibuka ? 'Belum dibuka' : isDibuka ? 'Dibuka' : 'Ditutup'}
-            </Text>
-          </View>
-        </View>
-
-        <Text style={styles.praktikumTitle}>{sesi.praktikum}</Text>
-
-        <View style={styles.detailGrid}>
-          <View style={styles.detailCol}>
-            <Text style={styles.detailLabel}>Kelas</Text>
-            <Text style={styles.detailValue}>{sesi.kelas}</Text>
-          </View>
-          <View style={styles.detailCol}>
-            <Text style={styles.detailLabel}>Laboratorium</Text>
-            <Text style={styles.detailValue}>{sesi.lab}</Text>
-          </View>
-        </View>
-
-        <View style={styles.detailGrid}>
-          <View style={styles.detailCol}>
-            <Text style={styles.detailLabel}>Tanggal Pelaksanaan</Text>
-            <Text style={styles.detailValue}>{sesi.tanggal}</Text>
-          </View>
-          <View style={styles.detailCol}>
-            <Text style={styles.detailLabel}>Waktu Jadwal</Text>
-            <Text style={styles.detailValue}>
-              {sesi.jamMulai} - {sesi.jamSelesai} WIB
-            </Text>
-          </View>
-        </View>
-
-        {sesi.dibukaPada || sesi.ditutupPada ? (
-          <View style={styles.timelineBox}>
-            {sesi.dibukaPada ? (
-              <View style={styles.timelineRow}>
-                <Text style={styles.timelineLabel}>Dibuka pada:</Text>
-                <Text style={styles.timelineValue}>{formatWaktu(sesi.dibukaPada)}</Text>
-              </View>
-            ) : null}
-            {sesi.ditutupPada ? (
-              <View style={styles.timelineRow}>
-                <Text style={styles.timelineLabel}>Ditutup pada:</Text>
-                <Text style={styles.timelineValue}>{formatWaktu(sesi.ditutupPada)}</Text>
-              </View>
-            ) : null}
-          </View>
-        ) : null}
-
-        {sesi.catatanPenutup ? (
-          <View style={styles.catatanBox}>
-            <Text style={styles.catatanLabel}>Catatan Penutup Sesi</Text>
-            <Text style={styles.catatanContent}>{sesi.catatanPenutup}</Text>
-          </View>
-        ) : null}
-      </View>
-
-      {/* Ringkasan Angka Kehadiran */}
-      <View style={styles.statsCard}>
-        <View style={styles.statItem}>
-          <Text style={styles.statNumber}>{jumlahHadir}</Text>
-          <Text style={styles.statLabel}>Hadir</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statNumber, styles.statNumberSecondary]}>
-            {jumlahBelumHadir}
-          </Text>
-          <Text style={styles.statLabel}>Belum Hadir</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statNumber, styles.statNumberTotal]}>
-            {totalPraktikan}
-          </Text>
-          <Text style={styles.statLabel}>Total Mahasiswa</Text>
-        </View>
-      </View>
-
-      {/* Banner Kondisi Khusus Sesuai Spesifikasi FR-10, FR-12, UT-07 */}
-      {isBelumDibuka && (
-        <View style={styles.bannerBelumDibuka}>
-          <Text style={styles.bannerBelumDibukaTitle}>Sesi belum dibuka</Text>
-          <Text style={styles.bannerBelumDibukaDesc}>
-            Sesi praktikum ini belum diaktifkan oleh asisten. Mahasiswa belum dapat melakukan presensi kehadiran.
-          </Text>
-        </View>
-      )}
-
-      {!isBelumDibuka && jumlahHadir === 0 && (
-        <View style={styles.bannerKosong}>
-          <Text style={styles.bannerKosongTitle}>Belum ada praktikan yang hadir</Text>
-          <Text style={styles.bannerKosongDesc}>
-            Data presensi akan otomatis diperbarui begitu praktikan melakukan presensi mandiri.
-          </Text>
-        </View>
-      )}
-
-      {/* Judul Seksi Daftar Praktikan */}
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Daftar Kehadiran Mahasiswa</Text>
-        <Text style={styles.sectionSubtitle}>
-          {jumlahHadir} dari {totalPraktikan} hadir
-        </Text>
-      </View>
-    </View>
-  );
+  if (sessionLoading) return <Loading />;
+  if (!session) {
+    return <Notice title="Sesi tidak tersedia" description={sessionError ?? 'Sesi tidak ditemukan.'} action="Coba lagi" onAction={() => setRetryKey((key) => key + 1)} />;
+  }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content"  />
-      
-      {/* Top Bar Navigasi */}
-      <View style={styles.navBar}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.back()}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Text style={styles.backButtonText}>← Kembali</Text>
-        </TouchableOpacity>
-        <Text style={styles.navTitle} numberOfLines={1}>
-          Rekap Pertemuan {sesi.pertemuan}
-        </Text>
-        <View style={styles.navBarPlaceholder} />
-      </View>
-
+    <View style={styles.screen}>
       <FlatList
-        data={rekapData}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <RekapItem
-            nomor={item.nomor}
-            nama={item.nama}
-            nim={item.nim}
-            status={item.status}
-            waktuHadir={item.waktuHadir}
-          />
-        )}
-        ListHeaderComponent={renderHeader}
+        data={roster}
+        keyExtractor={(item) => item.uid}
+        renderItem={({ item, index }) => <RosterRow item={item} index={index} />}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={(
+          <>
+            <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.back}><Text style={styles.backText}>‹  Kembali</Text></Pressable>
+            <View style={styles.sessionCard}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.meeting}>Pertemuan {session.pertemuan}</Text>
+                <Text style={[styles.badge, session.status === 'dibuka' && styles.badgeOpen, session.status === 'ditutup' && styles.badgeClosed]}>
+                  {session.status === 'dibuka' ? 'Dibuka' : session.status === 'ditutup' ? 'Ditutup' : 'Belum dibuka'}
+                </Text>
+              </View>
+              <Text style={styles.sessionTitle}>{session.praktikum}</Text>
+              <Text style={styles.meta}>{session.kelas} · {session.lab}</Text>
+              <Text style={styles.meta}>{session.tanggal} · {session.jamMulai}–{session.jamSelesai}</Text>
+            </View>
+            {session.status === 'belum_dibuka' ? <Notice title="Sesi belum dibuka" description="Rekap kehadiran akan tersedia setelah sesi dibuka." /> : null}
+            <View style={styles.summary}>
+              <Text style={styles.summaryTitle}>Ringkasan kehadiran</Text>
+              <Text style={styles.summaryCount}>{rosterLoading ? 'Memuat data…' : rosterError ? 'Jumlah hadir belum dapat dihitung' : `${attendedCount} dari ${roster.length} hadir`}</Text>
+              {rosterError ? <Text style={styles.error}>{rosterError}</Text> : null}
+              {rosterError ? <Pressable accessibilityRole="button" onPress={() => setRetryKey((key) => key + 1)} style={styles.retry}><Text style={styles.retryText}>Coba lagi</Text></Pressable> : null}
+            </View>
+            <Text style={styles.listTitle}>Daftar praktikan</Text>
+            {!rosterLoading && !rosterError && roster.length === 0 ? <Notice title="Belum ada peserta aktif" description="Belum ada praktikan yang terdaftar di kelas sesi ini." /> : null}
+          </>
+        )}
+        ListEmptyComponent={rosterLoading ? <ActivityIndicator color="#315CCB" style={styles.loader} /> : undefined}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
+function RosterRow({ item, index }: { item: AttendanceRosterItem; index: number }) {
+  const present = Boolean(item.presensi);
+  return (
+    <View style={styles.rosterRow}>
+      <View style={styles.avatar}><Text style={styles.avatarText}>{index + 1}</Text></View>
+      <View style={styles.person}>
+        <Text style={styles.personName}>{item.nama}</Text>
+        <Text style={styles.personId}>{item.nim}</Text>
+      </View>
+      <View style={styles.attendance}>
+        <Text style={[styles.attendanceStatus, present ? styles.present : styles.absent]}>{present ? 'Hadir' : 'Belum hadir'}</Text>
+        {present ? <Text style={styles.time}>{formatTime(item.presensi?.waktuHadir)}</Text> : null}
+      </View>
+    </View>
+  );
+}
+
+function Loading() {
+  return <View style={styles.center}><ActivityIndicator color="#315CCB" /><Text style={styles.loadingText}>Memuat detail sesi…</Text></View>;
+}
+
+function Notice({ title, description, action, onAction }: { title: string; description: string; action?: string; onAction?: () => void }) {
+  return <View style={styles.notice}><Text style={styles.noticeTitle}>{title}</Text><Text style={styles.noticeText}>{description}</Text>{action && onAction ? <Pressable accessibilityRole="button" onPress={onAction} style={styles.retry}><Text style={styles.retryText}>{action}</Text></Pressable> : null}</View>;
+}
+
+function formatTime(value?: string): string {
+  if (!value) return 'Waktu tidak tersedia';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Waktu tidak tersedia';
+  return `${new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit' }).format(date)} WIB`;
+}
+
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
-  },
-  navBar: {
-    height: 52,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-  },
-  backButton: {
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingRight: 8,
-  },
-  backButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0F766E',
-  },
-  navTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0F172A',
-    flex: 1,
-    textAlign: 'center',
-    marginHorizontal: 8,
-  },
-  navBarPlaceholder: {
-    width: 60,
-  },
-  listContent: {
-    padding: 16,
-    paddingBottom: 36,
-  },
-  headerComponent: {
-    marginBottom: 8,
-  },
-  sesiCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
-  },
-  sesiCardTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  pertemuanBadge: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  pertemuanText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  statusBadgeBelum: {
-    backgroundColor: '#F8FAFC',
-    borderColor: '#CBD5E1',
-  },
-  statusBadgeDibuka: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-  },
-  statusBadgeDitutup: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  statusTextBelum: {
-    color: '#64748B',
-  },
-  statusTextDibuka: {
-    color: '#059669',
-  },
-  statusTextDitutup: {
-    color: '#DC2626',
-  },
-  praktikumTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0F172A',
-    lineHeight: 22,
-    marginBottom: 12,
-  },
-  detailGrid: {
-    flexDirection: 'row',
-    marginBottom: 8,
-  },
-  detailCol: {
-    flex: 1,
-  },
-  detailLabel: {
-    fontSize: 11,
-    color: '#94A3B8',
-    marginBottom: 2,
-  },
-  detailValue: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  timelineBox: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-  },
-  timelineRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 3,
-  },
-  timelineLabel: {
-    fontSize: 12,
-    color: '#64748B',
-  },
-  timelineValue: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#0F172A',
-  },
-  catatanBox: {
-    marginTop: 10,
-    backgroundColor: '#F8FAFC',
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  catatanLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
-    marginBottom: 3,
-  },
-  catatanContent: {
-    fontSize: 12,
-    color: '#1E293B',
-    lineHeight: 17,
-  },
-  statsCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
-  },
-  statItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  statNumber: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#059669',
-    marginBottom: 2,
-  },
-  statNumberSecondary: {
-    color: '#64748B',
-  },
-  statNumberTotal: {
-    color: '#0F172A',
-  },
-  statLabel: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '500',
-  },
-  statDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: '#E2E8F0',
-  },
-  bannerBelumDibuka: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FDE68A',
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 14,
-  },
-  bannerBelumDibukaTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#92400E',
-    marginBottom: 3,
-  },
-  bannerBelumDibukaDesc: {
-    fontSize: 12,
-    color: '#B45309',
-    lineHeight: 17,
-  },
-  bannerKosong: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#E2E8F0',
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 14,
-  },
-  bannerKosongTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#334155',
-    marginBottom: 3,
-  },
-  bannerKosongDesc: {
-    fontSize: 12,
-    color: '#64748B',
-    lineHeight: 17,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-    paddingHorizontal: 2,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  sectionSubtitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  errorContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0F172A',
-    marginBottom: 8,
-  },
-  errorSubtitle: {
-    fontSize: 14,
-    color: '#64748B',
-    textAlign: 'center',
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-  btnKembali: {
-    minHeight: 44,
-    backgroundColor: '#0F766E',
-    borderRadius: 8,
-    paddingHorizontal: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  btnKembaliText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 13,
-  },
+  screen: { backgroundColor: '#F5F7FB', flex: 1 },
+  listContent: { paddingBottom: 30, paddingHorizontal: 18, paddingTop: 8 },
+  back: { alignSelf: 'flex-start', justifyContent: 'center', minHeight: 44, paddingRight: 10 },
+  backText: { color: '#315CCB', fontSize: 14, fontWeight: '700' },
+  sessionCard: { backgroundColor: '#FFFFFF', borderColor: '#E3E8F0', borderRadius: 18, borderWidth: 1, padding: 16 },
+  rowBetween: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  meeting: { color: '#526074', fontSize: 12, fontWeight: '700' },
+  badge: { backgroundColor: '#FFF3D6', borderRadius: 16, color: '#805B00', fontSize: 11, fontWeight: '700', overflow: 'hidden', paddingHorizontal: 10, paddingVertical: 6 },
+  badgeOpen: { backgroundColor: '#DFF5E9', color: '#17643D' },
+  badgeClosed: { backgroundColor: '#E9EDF3', color: '#526074' },
+  sessionTitle: { color: '#17243B', fontSize: 18, fontWeight: '800', lineHeight: 25, marginTop: 12 },
+  meta: { color: '#65738A', fontSize: 13, lineHeight: 19, marginTop: 5 },
+  summary: { backgroundColor: '#FFFFFF', borderColor: '#E3E8F0', borderRadius: 16, borderWidth: 1, marginTop: 14, padding: 16 },
+  summaryTitle: { color: '#526074', fontSize: 13, fontWeight: '600' },
+  summaryCount: { color: '#17243B', fontSize: 23, fontWeight: '800', marginTop: 5 },
+  listTitle: { color: '#17243B', fontSize: 18, fontWeight: '800', marginBottom: 10, marginTop: 22 },
+  rosterRow: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#E3E8F0', borderRadius: 14, borderWidth: 1, flexDirection: 'row', marginBottom: 9, minHeight: 76, paddingHorizontal: 13, paddingVertical: 11 },
+  avatar: { alignItems: 'center', backgroundColor: '#EEF3FF', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  avatarText: { color: '#315CCB', fontSize: 13, fontWeight: '800' },
+  person: { flex: 1, marginLeft: 11 },
+  personName: { color: '#17243B', fontSize: 14, fontWeight: '700' },
+  personId: { color: '#65738A', fontSize: 12, marginTop: 4 },
+  attendance: { alignItems: 'flex-end', marginLeft: 8 },
+  attendanceStatus: { fontSize: 12, fontWeight: '700' },
+  present: { color: '#167346' },
+  absent: { color: '#65738A' },
+  time: { color: '#65738A', fontSize: 11, marginTop: 4 },
+  notice: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#E3E8F0', borderRadius: 16, borderWidth: 1, marginTop: 12, padding: 20 },
+  noticeTitle: { color: '#17243B', fontSize: 15, fontWeight: '800', textAlign: 'center' },
+  noticeText: { color: '#65738A', fontSize: 13, lineHeight: 20, marginTop: 5, textAlign: 'center' },
+  error: { color: '#B42318', fontSize: 13, marginTop: 8 },
+  retry: { alignItems: 'center', backgroundColor: '#315CCB', borderRadius: 10, justifyContent: 'center', marginTop: 10, minHeight: 44, paddingHorizontal: 16 },
+  retryText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  center: { alignItems: 'center', backgroundColor: '#F5F7FB', flex: 1, justifyContent: 'center' },
+  loadingText: { color: '#65738A', fontSize: 14, marginTop: 10 },
+  loader: { marginVertical: 22 },
 });
