@@ -1,18 +1,27 @@
-
+import React from 'react';
+import { ActivityIndicator, View } from 'react-native';
 import { useSiprakContext } from '@/context/SiprakContext';
 import { colors } from '@/theme';
 import { Redirect, Tabs } from 'expo-router';
 
 export default function AsistenLayout() {
-  const { currentUser } = useSiprakContext();
+  const { currentUser, authStatus } = useSiprakContext();
 
-  // Route guard: hanya pengguna dengan peran asisten
-  if (!currentUser) {
+  if (authStatus === 'initializing') {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}>
+        <ActivityIndicator color={colors.primary} size="large" />
+      </View>
+    );
+  }
+  if (authStatus === 'profile-pending' || authStatus === 'profile-error') {
+    return <Redirect href="/account-pending" />;
+  }
+  if (authStatus !== 'authenticated' || !currentUser) {
     return <Redirect href="/" />;
   }
-
   if (currentUser.peran !== 'asisten') {
-    return <Redirect href="/" />;
+    return <Redirect href="/praktikan" />;
   }
 
   return (
@@ -21,41 +30,14 @@ export default function AsistenLayout() {
         headerShown: true,
         headerStyle: { backgroundColor: colors.surface },
         headerShadowVisible: false,
-        headerTitleStyle: {
-          color: colors.text,
-          fontWeight: '700',
-        },
+        headerTitleStyle: { color: colors.text, fontWeight: '700' },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.muted,
-        tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
-        },
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Jadwal',
-          headerShown: false,
-        }}
-      />
-
-      <Tabs.Screen
-        name="rekap"
-        options={{
-          title: 'Rekap',
-          headerTitle: 'Rekap Presensi',
-        }}
-      />
-
-      <Tabs.Screen
-        name="profil"
-        options={{
-          title: 'Profil',
-          headerTitle: 'Profil Asisten',
-        }}
-      />
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+      }}>
+      <Tabs.Screen name="index" options={{ title: 'Jadwal', headerShown: false }} />
+      <Tabs.Screen name="rekap" options={{ title: 'Rekap', headerTitle: 'Rekap Presensi' }} />
+      <Tabs.Screen name="profil" options={{ title: 'Profil', headerTitle: 'Profil Asisten' }} />
     </Tabs>
   );
 }
