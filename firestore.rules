@@ -1,0 +1,743 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function sudahLogin() {
+      return request.auth != null;
+    }
+
+    function asistenTerverifikasi() {
+      return sudahLogin()
+        && exists(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        )
+        && get(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.peran == 'asisten';
+    }
+
+    function kelasMilikAsisten(kelasId) {
+      return asistenTerverifikasi()
+        && get(
+          /databases/$(database)/documents/kelas/$(kelasId)
+        ).data.asistenUid == request.auth.uid;
+    }
+
+    function praktikanAktifDiKelas(kelasId) {
+      return sudahLogin()
+        && get(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.peran == 'praktikan'
+        && exists(
+          /databases/$(database)/documents/kelas/$(kelasId)/anggota/$(request.auth.uid)
+        )
+        && get(
+          /databases/$(database)/documents/kelas/$(kelasId)/anggota/$(request.auth.uid)
+        ).data.uid == request.auth.uid
+        && get(
+          /databases/$(database)/documents/kelas/$(kelasId)/anggota/$(request.auth.uid)
+        ).data.status == 'aktif';
+    }
+
+    function praktikumMilikAsisten(kelasId, praktikumId) {
+      return kelasMilikAsisten(kelasId)
+        && exists(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId))
+        && get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)).data.asistenUid == request.auth.uid;
+    }
+
+    function praktikanAktifDiPraktikum(kelasId, praktikumId) {
+      return sudahLogin()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.peran == 'praktikan'
+        && exists(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/anggota/$(request.auth.uid))
+        && get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/anggota/$(request.auth.uid)).data.uid == request.auth.uid
+        && get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/anggota/$(request.auth.uid)).data.status == 'aktif';
+    }
+
+    function jadwalSesiValid() {
+      return request.resource.data.pertemuan is int
+        && request.resource.data.pertemuan > 0
+        && request.resource.data.lab is string
+        && request.resource.data.lab.size() > 0
+        && request.resource.data.tanggal is string
+        && request.resource.data.tanggal.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.jamMulai is string
+        && request.resource.data.jamMulai.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+        && request.resource.data.jamSelesai is string
+        && request.resource.data.jamSelesai.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+        && request.resource.data.jamMulai < request.resource.data.jamSelesai
+        && waktuSesiAkanDatang(request.resource.data.tanggal, request.resource.data.jamMulai)
+        && waktuSesiAkanDatang(request.resource.data.tanggal, request.resource.data.jamSelesai);
+    }
+
+    function waktuSesiAkanDatang(tanggal, waktu) {
+      let waktuJakartaSekarang = request.time + duration.value(7, 'h');
+      let waktuSesi = timestamp.date(
+        int(tanggal[0:4]),
+        int(tanggal[5:7]),
+        int(tanggal[8:10])
+      ) + duration.time(int(waktu[0:2]), int(waktu[3:5]), 0, 0);
+      return waktuSesi > waktuJakartaSekarang;
+    }
+
+    match /users/{userId} {
+      allow get: if sudahLogin()
+        && (
+          request.auth.uid == userId
+          || asistenTerverifikasi()
+        );
+
+      allow create: if sudahLogin()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasAll([
+          'uid',
+          'nim',
+          'nama',
+          'email',
+          'peran',
+          'createdAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'uid',
+          'nim',
+          'nama',
+          'email',
+          'peran',
+          'createdAt'
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.nim is string
+        && request.resource.data.nim.size() > 0
+        && request.resource.data.nama is string
+        && request.resource.data.email is string
+        && request.resource.data.peran == 'praktikan'
+        && request.resource.data.createdAt is timestamp
+        && getAfter(
+          /databases/$(database)/documents/nim_index/$(request.resource.data.nim)
+        ).data.uid == request.auth.uid;
+
+      allow list, update, delete: if false;
+    }
+
+    match /kelas/{kelasId} {
+      allow create: if asistenTerverifikasi()
+        && request.resource.data.keys().hasAll([
+          'nama',
+          'asistenUid',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'nama',
+          'praktikum',
+          'asistenUid',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.nama is string
+        && (!request.resource.data.keys().hasAny(['praktikum']) || request.resource.data.praktikum is string)
+        && request.resource.data.asistenUid == request.auth.uid
+        && request.resource.data.status == 'aktif'
+        && request.resource.data.createdAt is string
+        && request.resource.data.updatedAt is string;
+
+      allow get, list: if asistenTerverifikasi()
+        && resource.data.asistenUid == request.auth.uid;
+
+      allow update: if kelasMilikAsisten(kelasId)
+        && request.resource.data.asistenUid == resource.data.asistenUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.keys().hasOnly([
+          'nama',
+          'praktikum',
+          'asistenUid',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.nama is string
+        && (!request.resource.data.keys().hasAny(['praktikum']) || request.resource.data.praktikum is string)
+        && request.resource.data.status in ['aktif', 'diarsipkan']
+        && request.resource.data.updatedAt is string
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'nama',
+          'praktikum',
+          'status',
+          'updatedAt'
+        ]);
+
+      allow delete: if kelasMilikAsisten(kelasId);
+
+      match /praktikum/{praktikumId} {
+        allow get, list: if kelasMilikAsisten(kelasId)
+          || praktikanAktifDiPraktikum(kelasId, praktikumId);
+        allow create: if kelasMilikAsisten(kelasId)
+          && (get(/databases/$(database)/documents/kelas/$(kelasId)).data.status == 'aktif'
+            || (request.resource.data.legacyMigrasiSelesai == false
+              && get(/databases/$(database)/documents/kelas/$(kelasId)).data.praktikum == request.resource.data.nama))
+          && request.resource.data.keys().hasAll(['kelasId', 'nama', 'asistenUid', 'status', 'createdAt', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['kelasId', 'nama', 'asistenUid', 'status', 'createdAt', 'updatedAt', 'legacyMigrasiSelesai'])
+          && request.resource.data.kelasId == kelasId
+          && request.resource.data.nama is string
+          && request.resource.data.asistenUid == request.auth.uid
+          && request.resource.data.status in ['aktif', 'diarsipkan']
+          && request.resource.data.createdAt is string
+          && request.resource.data.updatedAt is string;
+        allow update: if praktikumMilikAsisten(kelasId, praktikumId)
+          && request.resource.data.kelasId == resource.data.kelasId
+          && request.resource.data.asistenUid == resource.data.asistenUid
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.nama is string
+          && request.resource.data.status in ['aktif', 'diarsipkan']
+          && request.resource.data.updatedAt is string
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nama', 'status', 'updatedAt', 'legacyMigrasiSelesai']);
+        allow delete: if praktikumMilikAsisten(kelasId, praktikumId);
+
+        match /anggota/{anggotaUid} {
+          allow get: if praktikumMilikAsisten(kelasId, praktikumId)
+            || (sudahLogin() && request.auth.uid == anggotaUid && resource.data.uid == request.auth.uid);
+          allow list: if praktikumMilikAsisten(kelasId, praktikumId)
+            || (sudahLogin() && resource.data.uid == request.auth.uid && resource.data.status == 'aktif');
+          allow create: if praktikumMilikAsisten(kelasId, praktikumId)
+            && request.resource.data.keys().hasAll(['uid', 'nama', 'nim', 'praktikumId', 'status', 'joinedAt'])
+            && request.resource.data.keys().hasOnly(['uid', 'nama', 'nim', 'praktikumId', 'status', 'joinedAt'])
+            && request.resource.data.uid == anggotaUid
+            && request.resource.data.praktikumId == praktikumId
+            && request.resource.data.nama is string
+            && request.resource.data.nim is string
+            && request.resource.data.status in ['aktif', 'nonaktif']
+            && request.resource.data.joinedAt is string
+            && get(/databases/$(database)/documents/users/$(anggotaUid)).data.peran == 'praktikan'
+            && get(/databases/$(database)/documents/users/$(anggotaUid)).data.nama == request.resource.data.nama
+            && get(/databases/$(database)/documents/users/$(anggotaUid)).data.nim == request.resource.data.nim;
+          allow update: if praktikumMilikAsisten(kelasId, praktikumId)
+            && request.resource.data.uid == resource.data.uid
+            && request.resource.data.praktikumId == resource.data.praktikumId
+            && request.resource.data.nama == resource.data.nama
+            && request.resource.data.nim == resource.data.nim
+            && request.resource.data.joinedAt == resource.data.joinedAt
+            && request.resource.data.status in ['aktif', 'nonaktif']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+          allow delete: if praktikumMilikAsisten(kelasId, praktikumId);
+        }
+
+        match /sesi/{sesiId} {
+          allow get, list: if praktikumMilikAsisten(kelasId, praktikumId)
+            || praktikanAktifDiPraktikum(kelasId, praktikumId);
+          allow create: if praktikumMilikAsisten(kelasId, praktikumId)
+            && request.resource.data.keys().hasAll(['kelasId', 'praktikumId', 'praktikum', 'pertemuan', 'kelas', 'lab', 'tanggal', 'jamMulai', 'jamSelesai', 'status', 'createdAt', 'updatedAt'])
+            && request.resource.data.keys().hasOnly(['kelasId', 'praktikumId', 'praktikum', 'pertemuan', 'kelas', 'lab', 'ruanganId', 'reservasiId', 'legacySumber', 'tanggal', 'jamMulai', 'jamSelesai', 'status', 'createdAt', 'updatedAt', 'dibukaPada', 'ditutupPada', 'catatanPenutup'])
+            && request.resource.data.kelasId == kelasId
+            && request.resource.data.praktikumId == praktikumId
+            && request.resource.data.pertemuan is int && request.resource.data.pertemuan > 0
+            && (request.resource.data.legacySumber == true
+              || request.resource.data.praktikum == get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)).data.nama)
+            && (request.resource.data.legacySumber == true
+              || request.resource.data.kelas == get(/databases/$(database)/documents/kelas/$(kelasId)).data.nama)
+            && jadwalSesiValid()
+            && request.resource.data.status in ['belum_dibuka', 'dibuka', 'ditutup', 'diarsipkan']
+            && request.resource.data.createdAt is string && request.resource.data.updatedAt is string
+            && (
+              (get(/databases/$(database)/documents/kelas/$(kelasId)).data.status == 'aktif'
+                && get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)).data.status == 'aktif'
+                && request.resource.data.status in ['belum_dibuka', 'diarsipkan']
+                && request.resource.data.keys().hasAll(['ruanganId', 'reservasiId'])
+                && get(/databases/$(database)/documents/laboratorium/$(request.resource.data.ruanganId)).data.asistenUid == request.auth.uid
+                && existsAfter(/databases/$(database)/documents/laboratorium/$(request.resource.data.ruanganId)/jadwal/$(request.resource.data.tanggal))
+                && getAfter(/databases/$(database)/documents/laboratorium/$(request.resource.data.ruanganId)/jadwal/$(request.resource.data.tanggal)).data.reservasi[request.resource.data.reservasiId].sesiId == sesiId
+                && getAfter(/databases/$(database)/documents/laboratorium/$(request.resource.data.ruanganId)/jadwal/$(request.resource.data.tanggal)).data.reservasi[request.resource.data.reservasiId].jamMulai == request.resource.data.jamMulai
+                && getAfter(/databases/$(database)/documents/laboratorium/$(request.resource.data.ruanganId)/jadwal/$(request.resource.data.tanggal)).data.reservasi[request.resource.data.reservasiId].jamSelesai == request.resource.data.jamSelesai)
+              || (request.resource.data.legacySumber == true
+                && exists(/databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId))
+                && get(/databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)).data.status == request.resource.data.status)
+            );
+          allow update: if praktikumMilikAsisten(kelasId, praktikumId)
+            && request.resource.data.kelasId == resource.data.kelasId
+            && request.resource.data.praktikumId == resource.data.praktikumId
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.keys().hasOnly(['kelasId', 'praktikumId', 'praktikum', 'pertemuan', 'kelas', 'lab', 'ruanganId', 'reservasiId', 'legacySumber', 'tanggal', 'jamMulai', 'jamSelesai', 'status', 'createdAt', 'updatedAt', 'dibukaPada', 'ditutupPada', 'catatanPenutup'])
+            && request.resource.data.status in ['belum_dibuka', 'dibuka', 'ditutup', 'diarsipkan']
+            && request.resource.data.updatedAt is string
+            && (request.resource.data.status in ['diarsipkan', 'dibuka', 'ditutup'] || jadwalSesiValid())
+            && (!request.resource.data.keys().hasAny(['ruanganId'])
+              || (get(/databases/$(database)/documents/laboratorium/$(request.resource.data.ruanganId)).data.asistenUid == request.auth.uid
+                && existsAfter(/databases/$(database)/documents/laboratorium/$(request.resource.data.ruanganId)/jadwal/$(request.resource.data.tanggal))
+                && getAfter(/databases/$(database)/documents/laboratorium/$(request.resource.data.ruanganId)/jadwal/$(request.resource.data.tanggal)).data.reservasi[request.resource.data.reservasiId].sesiId == sesiId));
+          allow delete: if praktikumMilikAsisten(kelasId, praktikumId);
+
+          match /presensi/{praktikanUid} {
+            allow get: if praktikumMilikAsisten(kelasId, praktikumId) || (sudahLogin() && request.auth.uid == praktikanUid && praktikanAktifDiPraktikum(kelasId, praktikumId));
+            allow list: if praktikumMilikAsisten(kelasId, praktikumId);
+            allow create: if (sudahLogin() && request.auth.uid == praktikanUid
+              && praktikanAktifDiPraktikum(kelasId, praktikumId)
+              && get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)).data.status == 'dibuka'
+              && !exists(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)/izin/$(praktikanUid))
+              && request.resource.data.keys().hasOnly(['sesiId', 'praktikanId', 'waktuHadir'])
+              && request.resource.data.sesiId == sesiId && request.resource.data.praktikanId == request.auth.uid && request.resource.data.waktuHadir is string)
+              || (praktikumMilikAsisten(kelasId, praktikumId)
+              && get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)).data.legacySumber == true
+              && exists(/databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)/presensi/$(praktikanUid))
+              && request.resource.data == get(/databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)/presensi/$(praktikanUid)).data);
+            allow update, delete: if false;
+          }
+
+          match /izin/{praktikanUid} {
+            allow get: if sudahLogin() && (request.auth.uid == praktikanUid || praktikumMilikAsisten(kelasId, praktikumId));
+            allow list: if praktikumMilikAsisten(kelasId, praktikumId);
+            allow create: if (sudahLogin() && request.auth.uid == praktikanUid
+              && praktikanAktifDiPraktikum(kelasId, praktikumId)
+              && get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)).data.status in ['dibuka', 'ditutup']
+              && !exists(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)/presensi/$(praktikanUid))
+              && request.resource.data.keys().hasAll(['id', 'kelasId', 'sesiId', 'praktikanId', 'namaPraktikan', 'nim', 'alasan', 'status', 'klasifikasiStatus', 'createdAt', 'updatedAt'])
+              && request.resource.data.id == praktikanUid && request.resource.data.kelasId == kelasId && request.resource.data.sesiId == sesiId
+              && request.resource.data.praktikanId == praktikanUid && request.resource.data.alasan is string && request.resource.data.alasan.size() >= 10
+              && request.resource.data.status == 'menunggu' && request.resource.data.klasifikasiStatus == 'menunggu'
+              && request.resource.data.createdAt is string && request.resource.data.updatedAt is string)
+              || (praktikumMilikAsisten(kelasId, praktikumId)
+              && get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)).data.legacySumber == true
+              && exists(/databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)/izin/$(praktikanUid))
+              && request.resource.data == get(/databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)/izin/$(praktikanUid)).data);
+            allow update: if (sudahLogin() && request.auth.uid == praktikanUid && resource.data.status == 'menunggu'
+              && request.resource.data.status == resource.data.status
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['klasifikasiStatus', 'kategoriAI', 'klasifikasiError', 'updatedAt'])
+              && request.resource.data.klasifikasiStatus in ['berhasil', 'gagal'] && request.resource.data.updatedAt is string
+              && (request.resource.data.klasifikasiStatus != 'berhasil' || request.resource.data.kategoriAI in ['Sakit', 'Izin', 'Alpha'])
+              && (request.resource.data.klasifikasiStatus != 'gagal' || request.resource.data.klasifikasiError in ['api_key_tidak_ada', 'api_key_tidak_valid', 'batas_permintaan', 'jaringan', 'layanan_groq', 'respons_tidak_valid', 'penyimpanan']))
+              || (praktikumMilikAsisten(kelasId, praktikumId) && resource.data.status == 'menunggu'
+              && request.resource.data.status in ['menunggu', 'diterima', 'ditolak'] && request.resource.data.updatedAt is string
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'catatanAsisten', 'klasifikasiStatus', 'kategoriAI', 'klasifikasiError', 'updatedAt'])
+              && (!request.resource.data.keys().hasAny(['kategoriAI']) || request.resource.data.kategoriAI in ['Sakit', 'Izin', 'Alpha'])
+              && (!request.resource.data.keys().hasAny(['catatanAsisten']) || request.resource.data.catatanAsisten is string && request.resource.data.catatanAsisten.size() <= 500));
+            allow delete: if false;
+          }
+        }
+      }
+
+      match /anggota/{anggotaUid} {
+        allow get: if kelasMilikAsisten(kelasId)
+          || (
+            sudahLogin()
+            && request.auth.uid == anggotaUid
+            && resource.data.uid == request.auth.uid
+          );
+
+        allow list: if kelasMilikAsisten(kelasId)
+          || (
+            sudahLogin()
+            && resource.data.uid == request.auth.uid
+            && resource.data.status == 'aktif'
+          );
+
+        allow create: if kelasMilikAsisten(kelasId)
+          && request.resource.data.keys().hasAll([
+            'uid',
+            'nama',
+            'nim',
+            'status',
+            'joinedAt'
+          ])
+          && request.resource.data.keys().hasOnly([
+            'uid',
+            'nama',
+            'nim',
+            'status',
+            'joinedAt'
+          ])
+          && request.resource.data.uid == anggotaUid
+          && request.resource.data.nama is string
+          && request.resource.data.nim is string
+          && request.resource.data.status == 'aktif'
+          && request.resource.data.joinedAt is string
+          && get(
+            /databases/$(database)/documents/users/$(anggotaUid)
+          ).data.peran == 'praktikan'
+          && get(
+            /databases/$(database)/documents/users/$(anggotaUid)
+          ).data.nama == request.resource.data.nama
+          && get(
+            /databases/$(database)/documents/users/$(anggotaUid)
+          ).data.nim == request.resource.data.nim;
+
+        allow update: if kelasMilikAsisten(kelasId)
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.nama == resource.data.nama
+          && request.resource.data.nim == resource.data.nim
+          && request.resource.data.joinedAt == resource.data.joinedAt
+          && request.resource.data.status in ['aktif', 'nonaktif']
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status']);
+
+        allow delete: if false;
+      }
+
+      match /sesi/{sesiId} {
+        allow get, list: if kelasMilikAsisten(kelasId)
+          || praktikanAktifDiKelas(kelasId);
+
+        allow create: if kelasMilikAsisten(kelasId)
+          && get(
+            /databases/$(database)/documents/kelas/$(kelasId)
+          ).data.status == 'aktif'
+          && request.resource.data.keys().hasAll([
+            'praktikum',
+            'pertemuan',
+            'kelas',
+            'lab',
+            'tanggal',
+            'jamMulai',
+            'jamSelesai',
+            'status',
+            'createdAt',
+            'updatedAt'
+          ])
+          && request.resource.data.keys().hasOnly([
+            'praktikum',
+            'pertemuan',
+            'kelas',
+            'lab',
+            'tanggal',
+            'jamMulai',
+            'jamSelesai',
+            'status',
+            'createdAt',
+            'updatedAt'
+          ])
+          && request.resource.data.praktikum
+            == get(
+              /databases/$(database)/documents/kelas/$(kelasId)
+            ).data.praktikum
+          && request.resource.data.kelas
+            == get(
+              /databases/$(database)/documents/kelas/$(kelasId)
+            ).data.nama
+          && jadwalSesiValid()
+          && request.resource.data.status == 'belum_dibuka'
+          && request.resource.data.createdAt is string
+          && request.resource.data.updatedAt is string;
+
+        allow update: if kelasMilikAsisten(kelasId)
+          && request.resource.data.keys().hasOnly([
+            'praktikum',
+            'pertemuan',
+            'kelas',
+            'lab',
+            'tanggal',
+            'jamMulai',
+            'jamSelesai',
+            'status',
+            'createdAt',
+            'updatedAt',
+            'dibukaPada',
+            'ditutupPada',
+            'catatanPenutup'
+          ])
+          && (
+            (
+              resource.data.status == 'belum_dibuka'
+              && request.resource.data.status == 'diarsipkan'
+              && request.resource.data.updatedAt is string
+              && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'updatedAt'])
+            )
+            ||
+            (
+              resource.data.status == 'belum_dibuka'
+              && request.resource.data.status == 'dibuka'
+              && request.resource.data.dibukaPada is string
+              && request.resource.data.updatedAt is string
+              && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'dibukaPada', 'updatedAt'])
+            )
+            ||
+            (
+              resource.data.status == 'dibuka'
+              && request.resource.data.status == 'ditutup'
+              && request.resource.data.ditutupPada is string
+              && request.resource.data.catatanPenutup is string
+              && request.resource.data.updatedAt is string
+              && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly([
+                  'status',
+                  'ditutupPada',
+                  'catatanPenutup',
+                  'updatedAt'
+                ])
+            )
+            ||
+            (
+              resource.data.status == 'belum_dibuka'
+              && request.resource.data.status == 'belum_dibuka'
+              && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly([
+                  'pertemuan',
+                  'lab',
+                  'tanggal',
+                  'jamMulai',
+                  'jamSelesai',
+                  'updatedAt'
+                ])
+              && jadwalSesiValid()
+              && request.resource.data.updatedAt is string
+            )
+          );
+
+        allow delete: if false;
+
+        match /presensi/{praktikanUid} {
+          allow get: if kelasMilikAsisten(kelasId)
+            || (
+              sudahLogin()
+              && request.auth.uid == praktikanUid
+              && praktikanAktifDiKelas(kelasId)
+            );
+
+          allow list: if kelasMilikAsisten(kelasId);
+
+          allow create: if sudahLogin()
+          && !exists(
+  /databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)/izin/$(praktikanUid)
+)
+            && request.auth.uid == praktikanUid
+            && praktikanAktifDiKelas(kelasId)
+            && get(
+              /databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)
+            ).data.status == 'dibuka'
+            && request.resource.data.keys().hasAll([
+              'sesiId',
+              'praktikanId',
+              'waktuHadir'
+            ])
+            && request.resource.data.keys().hasOnly([
+              'sesiId',
+              'praktikanId',
+              'waktuHadir'
+            ])
+            && request.resource.data.sesiId == sesiId
+            && request.resource.data.praktikanId == request.auth.uid
+            && request.resource.data.waktuHadir is string;
+
+          allow update, delete: if false;
+        }
+
+        match /izin/{praktikanUid} {
+  allow get: if request.auth != null
+    && (
+      request.auth.uid == praktikanUid
+      || kelasMilikAsisten(kelasId)
+    );
+
+  allow list: if kelasMilikAsisten(kelasId);
+
+  allow create: if request.auth != null
+    && request.auth.uid == praktikanUid
+    && praktikanAktifDiKelas(kelasId)
+    && get(
+      /databases/$(database)/documents/kelas/$(kelasId)/anggota/$(praktikanUid)
+    ).data.nama == request.resource.data.namaPraktikan
+    && get(
+      /databases/$(database)/documents/kelas/$(kelasId)/anggota/$(praktikanUid)
+    ).data.nim == request.resource.data.nim
+    && get(
+      /databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)
+    ).data.status in ['dibuka', 'ditutup']
+    && !exists(
+      /databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)/presensi/$(praktikanUid)
+    )
+    && request.resource.data.keys().hasAll([
+      'id',
+      'kelasId',
+      'sesiId',
+      'praktikanId',
+      'namaPraktikan',
+      'nim',
+      'alasan',
+      'status',
+      'klasifikasiStatus',
+      'createdAt',
+      'updatedAt'
+    ])
+    && request.resource.data.keys().hasOnly([
+      'id',
+      'kelasId',
+      'sesiId',
+      'praktikanId',
+      'namaPraktikan',
+      'nim',
+      'alasan',
+      'status',
+      'klasifikasiStatus',
+      'createdAt',
+      'updatedAt'
+    ])
+    && request.resource.data.id == praktikanUid
+    && request.resource.data.kelasId == kelasId
+    && request.resource.data.sesiId == sesiId
+    && request.resource.data.praktikanId == praktikanUid
+    && request.resource.data.alasan is string
+    && request.resource.data.alasan.size() >= 10
+    && request.resource.data.status == 'menunggu'
+    && request.resource.data.klasifikasiStatus == 'menunggu'
+    && request.resource.data.createdAt is string
+    && request.resource.data.updatedAt is string;
+
+  allow update: if
+    (
+      request.auth != null
+      && request.auth.uid == praktikanUid
+      && praktikanAktifDiKelas(kelasId)
+      && resource.data.status == 'menunggu'
+      && resource.data.klasifikasiStatus == 'menunggu'
+      && request.resource.data.status == resource.data.status
+      && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly([
+          'klasifikasiStatus',
+          'kategoriAI',
+          'klasifikasiError',
+          'updatedAt'
+        ])
+      && request.resource.data.klasifikasiStatus in ['berhasil', 'gagal']
+      && request.resource.data.updatedAt is string
+      && (
+        (
+          request.resource.data.klasifikasiStatus == 'berhasil'
+          && request.resource.data.kategoriAI in ['Sakit', 'Izin', 'Alpha']
+          && request.resource.data.klasifikasiError == null
+        )
+        ||
+        (
+          request.resource.data.klasifikasiStatus == 'gagal'
+          && !request.resource.data.keys().hasAny(['kategoriAI'])
+          && request.resource.data.klasifikasiError in [
+            'api_key_tidak_ada',
+            'api_key_tidak_valid',
+            'batas_permintaan',
+            'jaringan',
+            'layanan_groq',
+            'respons_tidak_valid'
+          ]
+        )
+      )
+    )
+    ||
+    (
+      kelasMilikAsisten(kelasId)
+      && resource.data.status == 'menunggu'
+      && resource.data.klasifikasiStatus in ['menunggu', 'berhasil', 'gagal']
+      && request.resource.data.status == resource.data.status
+      && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly([
+          'klasifikasiStatus',
+          'kategoriAI',
+          'klasifikasiError',
+          'updatedAt'
+        ])
+      && request.resource.data.klasifikasiStatus in ['berhasil', 'gagal']
+      && request.resource.data.updatedAt is string
+      && (
+        !request.resource.data.keys().hasAny(['kategoriAI'])
+        || request.resource.data.kategoriAI in ['Sakit', 'Izin', 'Alpha']
+      )
+      && (
+        !request.resource.data.keys().hasAny(['klasifikasiError'])
+        || request.resource.data.klasifikasiError == null
+        || request.resource.data.klasifikasiError in [
+          'api_key_tidak_ada',
+          'api_key_tidak_valid',
+          'batas_permintaan',
+          'jaringan',
+          'layanan_groq',
+          'respons_tidak_valid',
+          'penyimpanan'
+        ]
+      )
+      && (
+        request.resource.data.klasifikasiStatus != 'berhasil'
+        || (
+          request.resource.data.kategoriAI in ['Sakit', 'Izin', 'Alpha']
+          && request.resource.data.klasifikasiError == null
+        )
+      )
+    )
+    ||
+    (
+      kelasMilikAsisten(kelasId)
+      && resource.data.status == 'menunggu'
+      && request.resource.data.status in ['diterima', 'ditolak']
+      && request.resource.data.catatanAsisten is string
+      && request.resource.data.catatanAsisten.size() <= 500
+      && request.resource.data.updatedAt is string
+      && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['status', 'catatanAsisten', 'updatedAt'])
+    );
+
+  allow delete: if false;
+}
+      }
+    }
+
+    match /{path=**}/anggota/{anggotaUid} {
+      allow list: if sudahLogin()
+        && resource.data.uid == request.auth.uid
+        && resource.data.status == 'aktif';
+    }
+
+    match /laboratorium/{laboratoriumId} {
+      allow get, list: if asistenTerverifikasi();
+      allow create: if asistenTerverifikasi()
+        && request.resource.data.keys().hasAll(['nama', 'asistenUid', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['nama', 'asistenUid', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.nama is string && request.resource.data.nama.size() > 0
+        && request.resource.data.asistenUid == request.auth.uid
+        && request.resource.data.status == 'aktif'
+        && request.resource.data.createdAt is string && request.resource.data.updatedAt is string;
+      allow update: if asistenTerverifikasi()
+        && resource.data.asistenUid == request.auth.uid
+        && request.resource.data.asistenUid == resource.data.asistenUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.keys().hasOnly(['nama', 'asistenUid', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.nama is string
+        && request.resource.data.status in ['aktif', 'diarsipkan']
+        && request.resource.data.updatedAt is string;
+      allow delete: if asistenTerverifikasi() && resource.data.asistenUid == request.auth.uid;
+
+      match /jadwal/{tanggal} {
+        allow get, list: if asistenTerverifikasi()
+          && get(/databases/$(database)/documents/laboratorium/$(laboratoriumId)).data.asistenUid == request.auth.uid;
+        allow create, update: if asistenTerverifikasi()
+          && get(/databases/$(database)/documents/laboratorium/$(laboratoriumId)).data.asistenUid == request.auth.uid
+          && request.resource.data.tanggal == tanggal
+          && request.resource.data.reservasi is map
+          && request.resource.data.reservasi.size() <= 500;
+        allow delete: if asistenTerverifikasi()
+          && get(/databases/$(database)/documents/laboratorium/$(laboratoriumId)).data.asistenUid == request.auth.uid;
+      }
+    }
+
+    match /nim_index/{nim} {
+      allow get: if sudahLogin()
+        && (
+          resource == null
+          || resource.data.uid == request.auth.uid
+          || asistenTerverifikasi()
+        );
+
+      allow list: if false;
+
+      allow create: if sudahLogin()
+        && request.resource.data.keys().hasAll(['uid'])
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid
+        && getAfter(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.nim == nim;
+
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
