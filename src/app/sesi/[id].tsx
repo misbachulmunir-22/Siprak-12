@@ -1,6 +1,4 @@
 import { AsistenSesiActions } from "@/components/AsistenSesiActions";
-import { PraktikanIzinAction } from "@/components/PraktikanIzinAction";
-import { PraktikanPresensiAction } from "@/components/PraktikanPresensiAction";
 import { DataState, SkeletonCards } from "@/components/DataStates";
 import { useSiprak } from "@/context/SiprakContext";
 import type { StatusSesi } from "@/types/siprak";
@@ -57,28 +55,65 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 export default function DetailSesiScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { sessions, attendances, praktikanList, currentUser, refreshSessions } = useSiprak();
+  const { sessions, attendances, praktikanList, currentUser, refreshSessions } =
+    useSiprak();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError("");
-    try { await refreshSessions(); }
-    catch (error) { setLoadError(error instanceof Error ? error.message : "Detail sesi gagal dimuat. Periksa koneksi lalu coba lagi."); }
-    finally { setLoading(false); }
+    try {
+      await refreshSessions();
+    } catch (error) {
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Detail sesi gagal dimuat. Periksa koneksi lalu coba lagi.",
+      );
+    } finally {
+      setLoading(false);
+    }
   }, [refreshSessions]);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
 
   const sesi = sessions.find((item) => item.id === id);
 
   if (loading) {
-    return <SafeAreaView style={styles.safeArea}><ScrollView contentContainerStyle={styles.content}><Pressable onPress={() => router.back()} style={styles.backButton}><Text style={styles.backText}>‹ Kembali</Text></Pressable><SkeletonCards count={2} /></ScrollView></SafeAreaView>;
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <Pressable onPress={() => router.back()} style={styles.backButton}>
+            <Text style={styles.backText}>‹ Kembali</Text>
+          </Pressable>
+          <SkeletonCards count={2} />
+        </ScrollView>
+      </SafeAreaView>
+    );
   }
 
   if (loadError) {
-    return <SafeAreaView style={styles.safeArea}><ScrollView contentContainerStyle={styles.content}><Pressable onPress={() => router.back()} style={styles.backButton}><Text style={styles.backText}>‹ Kembali</Text></Pressable><DataState kind="error" title="Detail sesi belum bisa dimuat" message={loadError} actionLabel="Coba lagi" onAction={() => void load()} /></ScrollView></SafeAreaView>;
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <Pressable onPress={() => router.back()} style={styles.backButton}>
+            <Text style={styles.backText}>‹ Kembali</Text>
+          </Pressable>
+          <DataState
+            kind="error"
+            title="Detail sesi belum bisa dimuat"
+            message={loadError}
+            actionLabel="Coba lagi"
+            onAction={() => void load()}
+          />
+        </ScrollView>
+      </SafeAreaView>
+    );
   }
 
   if (!sesi) {
@@ -87,7 +122,13 @@ export default function DetailSesiScreen() {
         <Pressable onPress={() => router.back()} style={styles.backButton}>
           <Text style={styles.backText}>‹ Kembali</Text>
         </Pressable>
-        <DataState kind="empty" title="Sesi tidak ditemukan" message="Kembali ke jadwal dan pilih sesi yang tersedia." actionLabel="Kembali ke jadwal" onAction={() => router.back()} />
+        <DataState
+          kind="empty"
+          title="Sesi tidak ditemukan"
+          message="Kembali ke jadwal dan pilih sesi yang tersedia."
+          actionLabel="Kembali ke jadwal"
+          onAction={() => router.back()}
+        />
       </SafeAreaView>
     );
   }
@@ -155,10 +196,27 @@ export default function DetailSesiScreen() {
           <AsistenSesiActions sesi={sesi} />
         ) : null}
         {currentUser?.peran === "praktikan" ? (
-          <>
-            <PraktikanPresensiAction sesi={sesi} />
-            <PraktikanIzinAction sesi={sesi} />
-          </>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              router.push({
+                pathname: "/presensi/[id]",
+                params: { id: sesi.id },
+              })
+            }
+            style={{
+              minHeight: 50,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "#174A78",
+              borderRadius: 14,
+              marginTop: 14,
+            }}
+          >
+            <Text style={{ color: "#FFFFFF", fontSize: 15, fontWeight: "700" }}>
+              Buka halaman presensi
+            </Text>
+          </Pressable>
         ) : null}
       </ScrollView>
     </SafeAreaView>

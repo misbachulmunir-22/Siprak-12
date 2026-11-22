@@ -1,8 +1,16 @@
-import { useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, View, ActivityIndicator } from "react-native";
-
 import { useSiprak } from "@/context/SiprakContext";
 import type { Sesi } from "@/types/siprak";
+import * as Location from "expo-location";
+import { router } from "expo-router";
+import { useState } from "react";
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 type TahapModal = "konfirmasi" | "berhasil" | null;
 
@@ -26,28 +34,58 @@ export function PraktikanPresensiAction({ sesi }: { sesi: Sesi }) {
         minute: "2-digit",
       })
     : null;
-  const pengajuanIzin = currentUser ? leaveRequests.find(item => item.sesiId === sesi.id && item.praktikanId === currentUser.id) : undefined;
+  const pengajuanIzin = currentUser
+    ? leaveRequests.find(
+        (item) =>
+          item.sesiId === sesi.id && item.praktikanId === currentUser.id,
+      )
+    : undefined;
 
   async function konfirmasiPresensi() {
-  setSedangPresensi(true);
-  setPesanError("");
+    setSedangPresensi(true);
+    setPesanError("");
 
-  try {
-    const hasil = await checkIn(sesi);
-    setWaktuBerhasil(hasil.waktuHadir);
-    setTahapModal("berhasil");
-  } catch (error) {
-    setTahapModal(null);
+    try {
+      const layananLokasiAktif = await Location.hasServicesEnabledAsync();
 
-    setPesanError(
-      error instanceof Error
-        ? error.message
-        : "Presensi gagal disimpan. Coba lagi.",
-    );
-  } finally {
-    setSedangPresensi(false);
+      if (!layananLokasiAktif) {
+        throw new Error("Aktifkan layanan lokasi perangkat lalu coba lagi.");
+      }
+
+      const izinLokasi = await Location.requestForegroundPermissionsAsync();
+
+      if (!izinLokasi.granted) {
+        throw new Error(
+          izinLokasi.canAskAgain
+            ? "Izin lokasi diperlukan untuk melakukan presensi."
+            : "Izin lokasi ditolak. Aktifkan izin lokasi SIPRAK melalui Pengaturan perangkat.",
+        );
+      }
+
+      const lokasi = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+        mayShowUserSettingsDialog: true,
+      });
+
+      const hasil = await checkIn(sesi, {
+        latitude: lokasi.coords.latitude,
+        longitude: lokasi.coords.longitude,
+        akurasiMeter: lokasi.coords.accuracy ?? 99999,
+      });
+
+      setWaktuBerhasil(hasil.waktuHadir);
+      setTahapModal("berhasil");
+    } catch (error) {
+      setTahapModal(null);
+      setPesanError(
+        error instanceof Error
+          ? error.message
+          : "Presensi gagal disimpan. Coba lagi.",
+      );
+    } finally {
+      setSedangPresensi(false);
+    }
   }
-}
 
   const waktuKonfirmasi = waktuBerhasil
     ? new Date(waktuBerhasil).toLocaleTimeString("id-ID", {
@@ -71,9 +109,31 @@ export function PraktikanPresensiAction({ sesi }: { sesi: Sesi }) {
             <Text style={styles.successText}>Tercatat pukul {waktuHadir}</Text>
           </View>
         ) : pengajuanIzin ? (
-          <View style={pengajuanIzin.status === "ditolak" ? styles.rejectedBox : styles.leaveBox}>
-            <Text style={pengajuanIzin.status === "ditolak" ? styles.rejectedTitle : styles.leaveTitle}>{pengajuanIzin.status === "diterima" ? "Izin diterima" : pengajuanIzin.status === "ditolak" ? "Izin ditolak" : "Menunggu keputusan asisten"}</Text>
-            <Text style={styles.message}>{pengajuanIzin.status === "ditolak" ? "Pengajuan izin ini tidak dapat digunakan untuk presensi pada sesi yang sama." : "Presensi dinonaktifkan karena kamu sudah mengajukan izin untuk sesi ini."}</Text>
+          <View
+            style={
+              pengajuanIzin.status === "ditolak"
+                ? styles.rejectedBox
+                : styles.leaveBox
+            }
+          >
+            <Text
+              style={
+                pengajuanIzin.status === "ditolak"
+                  ? styles.rejectedTitle
+                  : styles.leaveTitle
+              }
+            >
+              {pengajuanIzin.status === "diterima"
+                ? "Izin diterima"
+                : pengajuanIzin.status === "ditolak"
+                  ? "Izin ditolak"
+                  : "Menunggu keputusan asisten"}
+            </Text>
+            <Text style={styles.message}>
+              {pengajuanIzin.status === "ditolak"
+                ? "Pengajuan izin ini tidak dapat digunakan untuk presensi pada sesi yang sama."
+                : "Presensi dinonaktifkan karena kamu sudah mengajukan izin untuk sesi ini."}
+            </Text>
           </View>
         ) : sesi.status === "belum_dibuka" ? (
           <Text style={styles.message}>Presensi belum dibuka.</Text>
@@ -86,13 +146,15 @@ export function PraktikanPresensiAction({ sesi }: { sesi: Sesi }) {
             </Text>
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                setPesanError("");
-                setTahapModal("konfirmasi");
-              }}
+              onPress={() =>
+                router.push({
+                  pathname: "/presensi/scan",
+                  params: { id: sesi.id },
+                })
+              }
               style={styles.primaryButton}
             >
-              <Text style={styles.primaryButtonText}>Presensi sekarang</Text>
+              <Text style={styles.primaryButtonText}>Pindai QR presensi</Text>
             </Pressable>
           </>
         )}
@@ -126,14 +188,14 @@ export function PraktikanPresensiAction({ sesi }: { sesi: Sesi }) {
                   <Pressable
                     accessibilityRole="button"
                     onPress={() => void konfirmasiPresensi()}
-disabled={sedangPresensi}
+                    disabled={sedangPresensi}
                     style={styles.primaryButtonSmall}
                   >
                     {sedangPresensi ? (
-  <ActivityIndicator color="#FFFFFF" />
-) : (
-  <Text style={styles.primaryButtonText}>Ya, presensi</Text>
-)}
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>Ya, presensi</Text>
+                    )}
                   </Pressable>
                 </View>
               </>
@@ -220,9 +282,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 4,
   },
-  leaveBox: { backgroundColor: "#FFF4DF", borderRadius: 12, marginTop: 12, padding: 12 },
+  leaveBox: {
+    backgroundColor: "#FFF4DF",
+    borderRadius: 12,
+    marginTop: 12,
+    padding: 12,
+  },
   leaveTitle: { color: "#9A5B00", fontSize: 14, fontWeight: "800" },
-  rejectedBox: { backgroundColor: "#FEF0EF", borderRadius: 12, marginTop: 12, padding: 12 },
+  rejectedBox: {
+    backgroundColor: "#FEF0EF",
+    borderRadius: 12,
+    marginTop: 12,
+    padding: 12,
+  },
   rejectedTitle: { color: "#B42318", fontSize: 14, fontWeight: "800" },
   errorText: {
     color: "#B42318",

@@ -23,14 +23,10 @@ function uidAsisten(): string {
 
 export async function ambilLaboratorium(): Promise<Laboratorium[]> {
   const uid = uidAsisten();
-  const hasil = await getDocs(
-    query(collection(db, "laboratorium"), where("asistenUid", "==", uid)),
-  );
-
+  const hasil = await getDocs(query(collection(db, "laboratorium"), where("asistenUid", "==", uid)));
   return hasil.docs
     .map((snapshot) => {
       const data = snapshot.data();
-
       if (
         typeof data.nama !== "string" ||
         typeof data.asistenUid !== "string" ||
@@ -40,12 +36,6 @@ export async function ambilLaboratorium(): Promise<Laboratorium[]> {
       ) {
         return null;
       }
-
-      const lokasiLengkap =
-        typeof data.latitude === "number" &&
-        typeof data.longitude === "number" &&
-        typeof data.radiusPresensiMeter === "number";
-
       return {
         id: snapshot.id,
         nama: data.nama,
@@ -53,22 +43,13 @@ export async function ambilLaboratorium(): Promise<Laboratorium[]> {
         status: data.status as StatusLaboratorium,
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
-        ...(lokasiLengkap
-          ? {
-              latitude: data.latitude as number,
-              longitude: data.longitude as number,
-              radiusPresensiMeter: data.radiusPresensiMeter as number,
-            }
-          : {}),
       } satisfies Laboratorium;
     })
     .filter((lab): lab is Laboratorium => lab !== null)
     .sort((a, b) => a.nama.localeCompare(b.nama));
 }
 
-export async function buatLaboratorium(
-  namaInput: string,
-): Promise<Laboratorium> {
+export async function buatLaboratorium(namaInput: string): Promise<Laboratorium> {
   const nama = namaInput.trim();
   if (!nama) throw new Error("Nama ruangan/laboratorium wajib diisi.");
   const asistenUid = uidAsisten();
@@ -93,48 +74,6 @@ export async function ubahLaboratorium(
   uidAsisten();
   await updateDoc(doc(db, "laboratorium", laboratoriumId), {
     nama,
-    updatedAt: new Date().toISOString(),
-  });
-}
-
-export async function simpanLokasiLaboratorium(
-  laboratoriumId: string,
-  input: {
-    latitude: number;
-    longitude: number;
-    radiusPresensiMeter: number;
-  },
-): Promise<void> {
-  if (
-    !Number.isFinite(input.latitude) ||
-    input.latitude < -90 ||
-    input.latitude > 90
-  ) {
-    throw new Error("Latitude harus berada antara -90 dan 90.");
-  }
-
-  if (
-    !Number.isFinite(input.longitude) ||
-    input.longitude < -180 ||
-    input.longitude > 180
-  ) {
-    throw new Error("Longitude harus berada antara -180 dan 180.");
-  }
-
-  if (
-    !Number.isFinite(input.radiusPresensiMeter) ||
-    input.radiusPresensiMeter < 1 ||
-    input.radiusPresensiMeter > 5000
-  ) {
-    throw new Error("Radius harus antara 1 dan 5000 meter.");
-  }
-
-  uidAsisten();
-
-  await updateDoc(doc(db, "laboratorium", laboratoriumId), {
-    latitude: input.latitude,
-    longitude: input.longitude,
-    radiusPresensiMeter: input.radiusPresensiMeter,
     updatedAt: new Date().toISOString(),
   });
 }
