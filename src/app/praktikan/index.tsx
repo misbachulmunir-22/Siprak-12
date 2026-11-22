@@ -172,6 +172,24 @@ export default function JadwalPraktikanScreen() {
             <Text style={styles.subtitle}>
               Ini jadwal praktikum dan informasi presensimu.
             </Text>
+            <Pressable
+  accessibilityRole="button"
+  onPress={() => router.push("/peta")}
+  style={{
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "flex-start",
+    paddingHorizontal: 18,
+    backgroundColor: "#EAF0FB",
+    borderRadius: 14,
+    marginTop: 16,
+  }}
+>
+  <Text style={{ color: "#173F7A", fontSize: 15, fontWeight: "700" }}>
+    Lihat peta laboratorium
+  </Text>
+</Pressable>
 
             <View style={styles.summaryCard}>
               <View style={styles.summaryMain}>
