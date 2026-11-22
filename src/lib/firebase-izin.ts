@@ -1,3 +1,11 @@
+import { kirimPushKePraktikan } from "@/lib/push-notifications";
+import type {
+  KategoriIzinAI,
+  KodeErrorKlasifikasi,
+  PengajuanIzin,
+  Pengguna,
+  Sesi,
+} from "@/types/siprak";
 import { getAuth } from "@react-native-firebase/auth";
 import {
   collection,
@@ -8,14 +16,6 @@ import {
   runTransaction,
   updateDoc,
 } from "@react-native-firebase/firestore";
-
-import type {
-  KodeErrorKlasifikasi,
-  KategoriIzinAI,
-  PengajuanIzin,
-  Pengguna,
-  Sesi,
-} from "@/types/siprak";
 
 const db = getFirestore();
 const GROQ_MODEL = "openai/gpt-oss-20b";
@@ -222,15 +222,41 @@ async function klasifikasikanAlasanIzin(
 }
 
 function buatReferensiIzin(sesi: Sesi, praktikanUid: string) {
-  return doc(db, "kelas", sesi.kelasId, "praktikum", sesi.praktikumId, "sesi", sesi.id, "izin", praktikanUid);
+  return doc(
+    db,
+    "kelas",
+    sesi.kelasId,
+    "praktikum",
+    sesi.praktikumId,
+    "sesi",
+    sesi.id,
+    "izin",
+    praktikanUid,
+  );
 }
 
 function buatReferensiSesi(sesi: Sesi) {
-  return doc(db, "kelas", sesi.kelasId, "praktikum", sesi.praktikumId, "sesi", sesi.id);
+  return doc(
+    db,
+    "kelas",
+    sesi.kelasId,
+    "praktikum",
+    sesi.praktikumId,
+    "sesi",
+    sesi.id,
+  );
 }
 
 function buatReferensiAnggota(sesi: Sesi, praktikanUid: string) {
-  return doc(db, "kelas", sesi.kelasId, "praktikum", sesi.praktikumId, "anggota", praktikanUid);
+  return doc(
+    db,
+    "kelas",
+    sesi.kelasId,
+    "praktikum",
+    sesi.praktikumId,
+    "anggota",
+    praktikanUid,
+  );
 }
 
 export async function ajukanIzin(
@@ -499,7 +525,9 @@ export async function ambilIzinPraktikan(
     daftarSesi.map(async (sesi) => {
       let dokumenIzin = await getDoc(buatReferensiIzin(sesi, uid));
       if (!dokumenIzin.exists() && sesi.legacy) {
-        dokumenIzin = await getDoc(doc(db, "kelas", sesi.kelasId, "sesi", sesi.id, "izin", uid));
+        dokumenIzin = await getDoc(
+          doc(db, "kelas", sesi.kelasId, "sesi", sesi.id, "izin", uid),
+        );
       }
 
       if (!dokumenIzin.exists()) {
@@ -539,11 +567,26 @@ export async function ambilIzinAsisten(
   const hasilPerSesi = await Promise.all(
     daftarSesi.map(async (sesi) => {
       const hasil = await getDocs(
-        collection(db, "kelas", sesi.kelasId, "praktikum", sesi.praktikumId, "sesi", sesi.id, "izin"),
+        collection(
+          db,
+          "kelas",
+          sesi.kelasId,
+          "praktikum",
+          sesi.praktikumId,
+          "sesi",
+          sesi.id,
+          "izin",
+        ),
       );
-      const hasilLama = sesi.legacy ? await getDocs(collection(db, "kelas", sesi.kelasId, "sesi", sesi.id, "izin")) : null;
+      const hasilLama = sesi.legacy
+        ? await getDocs(
+            collection(db, "kelas", sesi.kelasId, "sesi", sesi.id, "izin"),
+          )
+        : null;
 
-      const byId = new Map([...hasil.docs, ...(hasilLama?.docs ?? [])].map(d => [d.id, d]));
+      const byId = new Map(
+        [...hasil.docs, ...(hasilLama?.docs ?? [])].map((d) => [d.id, d]),
+      );
       return [...byId.values()]
         .map((dokumen) => ubahDokumenKePengajuan(dokumen.id, dokumen.data()))
         .filter(
@@ -610,6 +653,15 @@ export async function putuskanIzin(
       updatedAt,
     });
   });
+  await kirimPushKePraktikan(
+    sesi.kelasId,
+    sesi.praktikumId,
+    pengajuan.praktikanId,
+    sesi.id,
+    keputusan === "diterima" ? "Izin diterima" : "Izin ditolak",
+    `Pengajuan izin untuk ${sesi.praktikum} · Pertemuan ${sesi.pertemuan} ${keputusan}.`,
+    keputusan === "diterima" ? "izin_diterima" : "izin_ditolak",
+  );
 
   return {
     ...pengajuan,
