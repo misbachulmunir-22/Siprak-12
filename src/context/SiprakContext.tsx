@@ -43,6 +43,7 @@ import type {
   Presensi,
   Sesi,
   SiprakContextValue,
+  PosisiPresensi
 } from "@/types/siprak";
 
 const SiprakContext = createContext<SiprakContextValue | null>(null);
@@ -230,28 +231,33 @@ export function SiprakProvider({ children }: SiprakProviderProps) {
     await refreshSessions();
   }
 
-  async function checkIn(sesi: Sesi): Promise<Presensi> {
-    if (!currentUser) {
-      throw new Error("Silakan masuk terlebih dahulu.");
-    }
-
-    if (currentUser.peran !== "praktikan") {
-      throw new Error("Masuk sebagai praktikan untuk melakukan presensi.");
-    }
-
-    const presensiBaru = await catatPresensi(sesi);
-
-    setAttendances((daftarLama) => {
-      const sudahAda = daftarLama.some(
-        (item) =>
-          item.sesiId === sesi.id && item.praktikanId === currentUser.id,
-      );
-
-      return sudahAda ? daftarLama : [...daftarLama, presensiBaru];
-    });
-
-    return presensiBaru;
+  async function checkIn(
+  sesi: Sesi,
+  posisi: PosisiPresensi,
+  tokenQr?: string,
+): Promise<Presensi> {
+  if (!currentUser) {
+    throw new Error("Silakan masuk terlebih dahulu.");
   }
+
+  if (currentUser.peran !== "praktikan") {
+    throw new Error("Masuk sebagai praktikan untuk melakukan presensi.");
+  }
+
+  const presensiBaru = await catatPresensi(sesi, posisi, tokenQr);
+
+  setAttendances((daftarLama) => {
+    const sudahAda = daftarLama.some(
+      (item) =>
+        item.sesiId === sesi.id &&
+        item.praktikanId === currentUser.id,
+    );
+
+    return sudahAda ? daftarLama : [...daftarLama, presensiBaru];
+  });
+
+  return presensiBaru;
+}
 
   async function submitLeave(
     sesi: Sesi,

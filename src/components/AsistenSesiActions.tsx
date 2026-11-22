@@ -1,8 +1,13 @@
 import { useSiprak } from "@/context/SiprakContext";
-import { arsipkanSesiKelas, hapusSesiKelas, pulihkanSesiKelas } from "@/lib/firebase-sessions";
+import {
+  arsipkanSesiKelas,
+  hapusSesiKelas,
+  pulihkanSesiKelas,
+  terbitkanKodeQrPresensi,
+} from "@/lib/firebase-sessions";
 import type { Sesi } from "@/types/siprak";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -15,6 +20,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import QRCode from "react-native-qrcode-svg";
 
 type ModeAksi = "arsip" | "pulihkan" | "hapus" | "buka" | "tutup" | null;
 
@@ -25,6 +31,53 @@ export function AsistenSesiActions({ sesi }: { sesi: Sesi }) {
   const [catatan, setCatatan] = useState("");
   const [pesanAksi, setPesanAksi] = useState("");
   const [sedangMenyimpan, setSedangMenyimpan] = useState(false);
+  const [nilaiQr, setNilaiQr] = useState<string | null>(null);
+  const [pesanQr, setPesanQr] = useState("");
+
+  useEffect(() => {
+    if (sesi.status !== "dibuka" || sesi.legacy) return;
+
+    let aktif = true;
+    let sedangMemperbarui = false;
+
+    async function perbaruiQr() {
+      if (sedangMemperbarui) return;
+      sedangMemperbarui = true;
+
+      try {
+        const hasil = await terbitkanKodeQrPresensi(sesi);
+
+        if (aktif) {
+          setNilaiQr(
+            JSON.stringify({
+              versi: 1,
+              sesiId: sesi.id,
+              token: hasil.token,
+            }),
+          );
+          setPesanQr("");
+        }
+      } catch (error) {
+        if (aktif) {
+          setPesanQr(
+            error instanceof Error
+              ? error.message
+              : "QR presensi gagal dibuat.",
+          );
+        }
+      } finally {
+        sedangMemperbarui = false;
+      }
+    }
+
+    void perbaruiQr();
+    const interval = setInterval(() => void perbaruiQr(), 30_000);
+
+    return () => {
+      aktif = false;
+      clearInterval(interval);
+    };
+  }, [sesi]);
 
   function batalkan() {
     setMode(null);
@@ -35,7 +88,11 @@ export function AsistenSesiActions({ sesi }: { sesi: Sesi }) {
   function bukaFormEdit() {
     router.push({
       pathname: "/asisten/kelas/sesi-form",
-      params: { kelasId: sesi.kelasId, praktikumId: sesi.praktikumId, sesiId: sesi.id },
+      params: {
+        kelasId: sesi.kelasId,
+        praktikumId: sesi.praktikumId,
+        sesiId: sesi.id,
+      },
     });
   }
 
@@ -77,7 +134,11 @@ export function AsistenSesiActions({ sesi }: { sesi: Sesi }) {
         batalkan();
         router.back();
       } catch (error) {
-        setPesanAksi(error instanceof Error ? error.message : "Perubahan sesi gagal disimpan.");
+        setPesanAksi(
+          error instanceof Error
+            ? error.message
+            : "Perubahan sesi gagal disimpan.",
+        );
       } finally {
         setSedangMenyimpan(false);
       }
@@ -149,6 +210,26 @@ export function AsistenSesiActions({ sesi }: { sesi: Sesi }) {
 
         {sesi.status === "dibuka" ? (
           <>
+            <View style={styles.qrBox}>
+              <Text style={styles.qrTitle}>QR presensi praktikan</Text>
+
+              {nilaiQr ? (
+                <View style={styles.qrFrame}>
+                  <QRCode value={nilaiQr} size={220} />
+                </View>
+              ) : (
+                <ActivityIndicator style={styles.qrLoader} color="#174A78" />
+              )}
+
+              {pesanQr ? (
+                <Text style={styles.qrError}>{pesanQr}</Text>
+              ) : (
+                <Text style={styles.qrHint}>
+                  Tampilkan QR ini kepada praktikan. Kode diperbarui otomatis
+                  setiap 30 detik.
+                </Text>
+              )}
+            </View>
             <Text style={styles.description}>
               Sesi sedang berjalan. Setelah ditutup, presensi baru tidak dapat
               dilakukan.
@@ -171,9 +252,24 @@ export function AsistenSesiActions({ sesi }: { sesi: Sesi }) {
 
         {sesi.status === "diarsipkan" ? (
           <>
-            <Text style={styles.description}>Sesi ini diarsipkan. Kamu dapat memulihkan atau menghapusnya bila tidak memiliki riwayat.</Text>
-            <Pressable accessibilityRole="button" onPress={() => setMode("pulihkan")} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Pulihkan sesi</Text></Pressable>
-            <Pressable accessibilityRole="button" onPress={() => setMode("hapus")} style={styles.archiveButton}><Text style={styles.archiveButtonText}>Hapus sesi</Text></Pressable>
+            <Text style={styles.description}>
+              Sesi ini diarsipkan. Kamu dapat memulihkan atau menghapusnya bila
+              tidak memiliki riwayat.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode("pulihkan")}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Pulihkan sesi</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode("hapus")}
+              style={styles.archiveButton}
+            >
+              <Text style={styles.archiveButtonText}>Hapus sesi</Text>
+            </Pressable>
           </>
         ) : null}
       </View>
@@ -197,14 +293,14 @@ export function AsistenSesiActions({ sesi }: { sesi: Sesi }) {
               >
                 <Text style={styles.modalTitle}>
                   {mode === "buka"
-                      ? "Buka sesi ini?"
-                      : mode === "arsip"
-                        ? "Arsipkan sesi ini?"
+                    ? "Buka sesi ini?"
+                    : mode === "arsip"
+                      ? "Arsipkan sesi ini?"
                       : mode === "pulihkan"
                         ? "Pulihkan sesi ini?"
                         : mode === "hapus"
                           ? "Hapus sesi ini?"
-                        : "Tutup sesi ini?"}
+                          : "Tutup sesi ini?"}
                 </Text>
 
                 {
@@ -218,7 +314,7 @@ export function AsistenSesiActions({ sesi }: { sesi: Sesi }) {
                             ? "Sesi kembali masuk ke daftar praktikum dan jadwal."
                             : mode === "hapus"
                               ? "Sesi hanya dapat dihapus jika belum memiliki presensi atau perizinan."
-                          : "Pastikan rekap kehadiran sudah diperiksa. Catatan penutup boleh dikosongkan."}
+                              : "Pastikan rekap kehadiran sudah diperiksa. Catatan penutup boleh dikosongkan."}
                     </Text>
 
                     {mode === "tutup" ? (
@@ -267,14 +363,14 @@ export function AsistenSesiActions({ sesi }: { sesi: Sesi }) {
                   ) : (
                     <Text style={styles.confirmText}>
                       {mode === "buka"
-                          ? "Ya, buka"
-                          : mode === "arsip"
-                            ? "Ya, arsipkan"
-                            : mode === "pulihkan"
-                              ? "Pulihkan"
-                              : mode === "hapus"
-                                ? "Hapus permanen"
-                            : "Ya, tutup"}
+                        ? "Ya, buka"
+                        : mode === "arsip"
+                          ? "Ya, arsipkan"
+                          : mode === "pulihkan"
+                            ? "Pulihkan"
+                            : mode === "hapus"
+                              ? "Hapus permanen"
+                              : "Ya, tutup"}
                     </Text>
                   )}
                 </Pressable>
@@ -288,6 +384,41 @@ export function AsistenSesiActions({ sesi }: { sesi: Sesi }) {
 }
 
 const styles = StyleSheet.create({
+  qrBox: {
+    alignItems: "center",
+    backgroundColor: "#F4F7FB",
+    borderRadius: 14,
+    marginTop: 14,
+    padding: 14,
+  },
+  qrTitle: {
+    color: "#172B3A",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  qrFrame: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    marginTop: 12,
+    padding: 10,
+  },
+  qrLoader: {
+    marginTop: 20,
+  },
+  qrHint: {
+    color: "#647789",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 10,
+    textAlign: "center",
+  },
+  qrError: {
+    color: "#B42318",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 10,
+    textAlign: "center",
+  },
   card: {
     backgroundColor: "#FFFFFF",
     borderColor: "#E2E8F0",
