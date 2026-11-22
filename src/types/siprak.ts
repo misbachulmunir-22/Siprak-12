@@ -1,12 +1,15 @@
 export type Peran = "asisten" | "praktikan";
 
-export type StatusSesi =
-  | "belum_dibuka"
-  | "dibuka"
-  | "ditutup"
-  | "diarsipkan";
+export type StatusSesi = "belum_dibuka" | "dibuka" | "ditutup" | "diarsipkan";
 
-export type StatusRiwayat = "hadir" | "izin" | "izin_menunggu" | "izin_ditolak" | "alpha" | "belum_hadir" | "belum_dimulai";
+export type StatusRiwayat =
+  | "hadir"
+  | "izin"
+  | "izin_menunggu"
+  | "izin_ditolak"
+  | "alpha"
+  | "belum_hadir"
+  | "belum_dimulai";
 
 export type StatusKelas = "aktif" | "diarsipkan";
 export type StatusAnggotaKelas = "aktif" | "nonaktif";
@@ -74,6 +77,11 @@ export interface Laboratorium {
   status: StatusLaboratorium;
   createdAt: string;
   updatedAt: string;
+
+  // Opsional sementara agar data laboratorium lama tetap bisa dibaca.
+  latitude?: number;
+  longitude?: number;
+  radiusPresensiMeter?: number;
 }
 
 export interface AnggotaKelas {
@@ -118,11 +126,21 @@ export interface Sesi {
   catatanPenutup?: string;
 }
 
+export interface PosisiPresensi {
+  latitude: number;
+  longitude: number;
+  akurasiMeter: number;
+}
+
 export interface Presensi {
   id: string;
   sesiId: string;
   praktikanId: string;
   waktuHadir: string;
+  latitude?: number;
+  longitude?: number;
+  jarakMeter?: number;
+  akurasiMeter?: number;
 }
 
 export interface SiprakContextValue {
@@ -137,7 +155,11 @@ export interface SiprakContextValue {
   logout: () => void;
   openSession: (sesi: Sesi) => Promise<void>;
   closeSession: (sesi: Sesi, catatan?: string) => Promise<void>;
-  checkIn: (sesi: Sesi) => Promise<Presensi>;
+  checkIn: (
+    sesi: Sesi,
+    posisi: PosisiPresensi,
+    tokenQr?: string,
+  ) => Promise<Presensi>;
   getAttendance: (sesiId: string) => Presensi[];
   getUserAttendance: (userId: string) => Presensi[];
   authReady: boolean;
