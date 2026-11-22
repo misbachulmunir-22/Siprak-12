@@ -80,6 +80,30 @@ service cloud.firestore {
       return waktuSesi > waktuJakartaSekarang;
     }
 
+    function lokasiLaboratoriumValid(data) {
+  return !data.keys().hasAny([
+      'latitude',
+      'longitude',
+      'radiusPresensiMeter'
+    ])
+    || (
+      data.keys().hasAll([
+        'latitude',
+        'longitude',
+        'radiusPresensiMeter'
+      ])
+      && data.latitude is number
+      && data.latitude >= -90
+      && data.latitude <= 90
+      && data.longitude is number
+      && data.longitude >= -180
+      && data.longitude <= 180
+      && data.radiusPresensiMeter is number
+      && data.radiusPresensiMeter >= 1
+      && data.radiusPresensiMeter <= 5000
+    );
+}
+
     match /users/{userId} {
       allow get: if sudahLogin()
         && (
@@ -118,6 +142,25 @@ service cloud.firestore {
 
       allow list, update, delete: if false;
     }
+
+    match /deviceTokens/{tokenId} {
+  allow get, list: if false;
+
+  allow create, update: if sudahLogin()
+    && request.resource.data.keys().hasOnly([
+      'uid',
+      'token',
+      'platform',
+      'updatedAt'
+    ])
+    && request.resource.data.uid == request.auth.uid
+    && request.resource.data.token == tokenId
+    && request.resource.data.platform in ['android', 'ios']
+    && request.resource.data.updatedAt is string;
+
+  allow delete: if sudahLogin()
+    && resource.data.uid == request.auth.uid;
+}
 
     match /kelas/{kelasId} {
       allow create: if asistenTerverifikasi()
@@ -223,6 +266,45 @@ service cloud.firestore {
           allow delete: if praktikumMilikAsisten(kelasId, praktikumId);
         }
 
+        match /pushTokens/{tokenId} {
+  allow get: if praktikumMilikAsisten(kelasId, praktikumId)
+    || (
+      sudahLogin()
+      && request.auth.uid == resource.data.uid
+      && praktikanAktifDiPraktikum(kelasId, praktikumId)
+    );
+
+  allow list: if praktikumMilikAsisten(kelasId, praktikumId)
+    || (
+      sudahLogin()
+      && resource.data.uid == request.auth.uid
+      && praktikanAktifDiPraktikum(kelasId, praktikumId)
+    );
+
+  allow create, update: if sudahLogin()
+    && request.auth.uid == request.resource.data.uid
+    && praktikanAktifDiPraktikum(kelasId, praktikumId)
+    && request.resource.data.keys().hasAll([
+      'uid',
+      'token',
+      'platform',
+      'updatedAt'
+    ])
+    && request.resource.data.keys().hasOnly([
+      'uid',
+      'token',
+      'platform',
+      'updatedAt'
+    ])
+    && request.resource.data.token == tokenId
+    && request.resource.data.platform in ['android', 'ios']
+    && request.resource.data.updatedAt is string;
+
+  allow delete: if sudahLogin()
+    && request.auth.uid == resource.data.uid
+    && praktikanAktifDiPraktikum(kelasId, praktikumId);
+}
+
         match /sesi/{sesiId} {
           allow get, list: if praktikumMilikAsisten(kelasId, praktikumId)
             || praktikanAktifDiPraktikum(kelasId, praktikumId);
@@ -267,21 +349,104 @@ service cloud.firestore {
                 && getAfter(/databases/$(database)/documents/laboratorium/$(request.resource.data.ruanganId)/jadwal/$(request.resource.data.tanggal)).data.reservasi[request.resource.data.reservasiId].sesiId == sesiId));
           allow delete: if praktikumMilikAsisten(kelasId, praktikumId);
 
+          match /kodePresensi/{kodeId} {
+  allow get: if praktikumMilikAsisten(kelasId, praktikumId);
+  allow list: if false;
+
+  allow create, update: if praktikumMilikAsisten(kelasId, praktikumId)
+    && get(
+      /databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)
+    ).data.status == 'dibuka'
+    && request.resource.data.keys().hasAll(['token', 'expiresAt'])
+    && request.resource.data.keys().hasOnly(['token', 'expiresAt'])
+    && request.resource.data.token is string
+    && request.resource.data.token.size() >= 32
+    && request.resource.data.expiresAt is timestamp
+    && request.resource.data.expiresAt > request.time
+    && request.resource.data.expiresAt < request.time + duration.value(1, 'm');
+
+  allow delete: if praktikumMilikAsisten(kelasId, praktikumId);
+}
+
           match /presensi/{praktikanUid} {
-            allow get: if praktikumMilikAsisten(kelasId, praktikumId) || (sudahLogin() && request.auth.uid == praktikanUid && praktikanAktifDiPraktikum(kelasId, praktikumId));
-            allow list: if praktikumMilikAsisten(kelasId, praktikumId);
-            allow create: if (sudahLogin() && request.auth.uid == praktikanUid
-              && praktikanAktifDiPraktikum(kelasId, praktikumId)
-              && get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)).data.status == 'dibuka'
-              && !exists(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)/izin/$(praktikanUid))
-              && request.resource.data.keys().hasOnly(['sesiId', 'praktikanId', 'waktuHadir'])
-              && request.resource.data.sesiId == sesiId && request.resource.data.praktikanId == request.auth.uid && request.resource.data.waktuHadir is string)
-              || (praktikumMilikAsisten(kelasId, praktikumId)
-              && get(/databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)).data.legacySumber == true
-              && exists(/databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)/presensi/$(praktikanUid))
-              && request.resource.data == get(/databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)/presensi/$(praktikanUid)).data);
-            allow update, delete: if false;
-          }
+  allow get: if praktikumMilikAsisten(kelasId, praktikumId)
+    || (
+      sudahLogin()
+      && request.auth.uid == praktikanUid
+      && praktikanAktifDiPraktikum(kelasId, praktikumId)
+    );
+
+  allow list: if praktikumMilikAsisten(kelasId, praktikumId);
+
+  allow create: if (
+    sudahLogin()
+    && request.auth.uid == praktikanUid
+    && praktikanAktifDiPraktikum(kelasId, praktikumId)
+    && get(
+      /databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)
+    ).data.status == 'dibuka'
+    && request.resource.data.tokenQr is string
+&& get(
+  /databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)/kodePresensi/aktif
+).data.token == request.resource.data.tokenQr
+&& get(
+  /databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)/kodePresensi/aktif
+).data.expiresAt is timestamp
+&& get(
+  /databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)/kodePresensi/aktif
+).data.expiresAt > request.time
+    && !exists(
+      /databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)/izin/$(praktikanUid)
+    )
+    && request.resource.data.keys().hasAll([
+      'sesiId',
+      'praktikanId',
+      'waktuHadir',
+      'latitude',
+      'longitude',
+      'jarakMeter',
+      'akurasiMeter',
+      'tokenQr'
+    ])
+    && request.resource.data.keys().hasOnly([
+      'sesiId',
+      'praktikanId',
+      'waktuHadir',
+      'latitude',
+      'longitude',
+      'jarakMeter',
+      'akurasiMeter',
+      'tokenQr'
+    ])
+    && request.resource.data.sesiId == sesiId
+    && request.resource.data.praktikanId == request.auth.uid
+    && request.resource.data.waktuHadir is string
+    && request.resource.data.latitude is number
+    && request.resource.data.latitude >= -90
+    && request.resource.data.latitude <= 90
+    && request.resource.data.longitude is number
+    && request.resource.data.longitude >= -180
+    && request.resource.data.longitude <= 180
+    && request.resource.data.jarakMeter is number
+    && request.resource.data.jarakMeter >= 0
+    && request.resource.data.akurasiMeter is number
+    && request.resource.data.akurasiMeter >= 0
+  )
+  || (
+    praktikumMilikAsisten(kelasId, praktikumId)
+    && get(
+      /databases/$(database)/documents/kelas/$(kelasId)/praktikum/$(praktikumId)/sesi/$(sesiId)
+    ).data.legacySumber == true
+    && exists(
+      /databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)/presensi/$(praktikanUid)
+    )
+    && request.resource.data == get(
+      /databases/$(database)/documents/kelas/$(kelasId)/sesi/$(sesiId)/presensi/$(praktikanUid)
+    ).data
+  );
+
+  allow update, delete: if false;
+}
 
           match /izin/{praktikanUid} {
             allow get: if sudahLogin() && (request.auth.uid == praktikanUid || praktikumMilikAsisten(kelasId, praktikumId));
@@ -684,36 +849,92 @@ service cloud.firestore {
     }
 
     match /laboratorium/{laboratoriumId} {
-      allow get, list: if asistenTerverifikasi();
-      allow create: if asistenTerverifikasi()
-        && request.resource.data.keys().hasAll(['nama', 'asistenUid', 'status', 'createdAt', 'updatedAt'])
-        && request.resource.data.keys().hasOnly(['nama', 'asistenUid', 'status', 'createdAt', 'updatedAt'])
-        && request.resource.data.nama is string && request.resource.data.nama.size() > 0
-        && request.resource.data.asistenUid == request.auth.uid
-        && request.resource.data.status == 'aktif'
-        && request.resource.data.createdAt is string && request.resource.data.updatedAt is string;
-      allow update: if asistenTerverifikasi()
-        && resource.data.asistenUid == request.auth.uid
-        && request.resource.data.asistenUid == resource.data.asistenUid
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.keys().hasOnly(['nama', 'asistenUid', 'status', 'createdAt', 'updatedAt'])
-        && request.resource.data.nama is string
-        && request.resource.data.status in ['aktif', 'diarsipkan']
-        && request.resource.data.updatedAt is string;
-      allow delete: if asistenTerverifikasi() && resource.data.asistenUid == request.auth.uid;
+  allow get: if asistenTerverifikasi()
+  || (
+    sudahLogin()
+    && get(
+      /databases/$(database)/documents/users/$(request.auth.uid)
+    ).data.peran == 'praktikan'
+    && resource.data.status == 'aktif'
+  );
 
-      match /jadwal/{tanggal} {
-        allow get, list: if asistenTerverifikasi()
-          && get(/databases/$(database)/documents/laboratorium/$(laboratoriumId)).data.asistenUid == request.auth.uid;
-        allow create, update: if asistenTerverifikasi()
-          && get(/databases/$(database)/documents/laboratorium/$(laboratoriumId)).data.asistenUid == request.auth.uid
-          && request.resource.data.tanggal == tanggal
-          && request.resource.data.reservasi is map
-          && request.resource.data.reservasi.size() <= 500;
-        allow delete: if asistenTerverifikasi()
-          && get(/databases/$(database)/documents/laboratorium/$(laboratoriumId)).data.asistenUid == request.auth.uid;
-      }
-    }
+allow list: if asistenTerverifikasi()
+  || (
+    sudahLogin()
+    && get(
+      /databases/$(database)/documents/users/$(request.auth.uid)
+    ).data.peran == 'praktikan'
+    && resource.data.status == 'aktif'
+  );
+
+  allow create: if asistenTerverifikasi()
+    && request.resource.data.keys().hasAll([
+      'nama',
+      'asistenUid',
+      'status',
+      'createdAt',
+      'updatedAt'
+    ])
+    && request.resource.data.keys().hasOnly([
+      'nama',
+      'asistenUid',
+      'status',
+      'createdAt',
+      'updatedAt',
+      'latitude',
+      'longitude',
+      'radiusPresensiMeter'
+    ])
+    && request.resource.data.nama is string
+    && request.resource.data.nama.size() > 0
+    && request.resource.data.asistenUid == request.auth.uid
+    && request.resource.data.status == 'aktif'
+    && request.resource.data.createdAt is string
+    && request.resource.data.updatedAt is string
+    && lokasiLaboratoriumValid(request.resource.data);
+
+  allow update: if asistenTerverifikasi()
+    && resource.data.asistenUid == request.auth.uid
+    && request.resource.data.asistenUid == resource.data.asistenUid
+    && request.resource.data.createdAt == resource.data.createdAt
+    && request.resource.data.keys().hasOnly([
+      'nama',
+      'asistenUid',
+      'status',
+      'createdAt',
+      'updatedAt',
+      'latitude',
+      'longitude',
+      'radiusPresensiMeter'
+    ])
+    && request.resource.data.nama is string
+    && request.resource.data.status in ['aktif', 'diarsipkan']
+    && request.resource.data.updatedAt is string
+    && lokasiLaboratoriumValid(request.resource.data);
+
+  allow delete: if asistenTerverifikasi()
+    && resource.data.asistenUid == request.auth.uid;
+
+  match /jadwal/{tanggal} {
+    allow get, list: if asistenTerverifikasi()
+      && get(
+        /databases/$(database)/documents/laboratorium/$(laboratoriumId)
+      ).data.asistenUid == request.auth.uid;
+
+    allow create, update: if asistenTerverifikasi()
+      && get(
+        /databases/$(database)/documents/laboratorium/$(laboratoriumId)
+      ).data.asistenUid == request.auth.uid
+      && request.resource.data.tanggal == tanggal
+      && request.resource.data.reservasi is map
+      && request.resource.data.reservasi.size() <= 500;
+
+    allow delete: if asistenTerverifikasi()
+      && get(
+        /databases/$(database)/documents/laboratorium/$(laboratoriumId)
+      ).data.asistenUid == request.auth.uid;
+  }
+}
 
     match /nim_index/{nim} {
       allow get: if sudahLogin()
